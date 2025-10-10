@@ -40,7 +40,7 @@ const Speedometer: React.FC<SpeedometerProps> = ({ speed, isOverSpeedLimit }) =>
 const styles = StyleSheet.create({
   speedometerContainer: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 60 : 40,
+    bottom:  "75%",
     right: 16,
     width: 120,
     height: 80,

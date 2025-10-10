@@ -75,7 +75,7 @@ const handleLogin = async () => {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 150000);
 
     const res = await fetch(`${LOCALHOST_IP}/api/auth/login`, {
       method: "POST",
@@ -102,16 +102,16 @@ const handleLogin = async () => {
       setEmail("");
       setPassword("");
 
-      Alert.alert(
-        "Welcome back! 👋",
-        `Hello ${data.user?.name || "there"}!`,
-        [
-          {
-            text: "Continue",
-            // onPress: () => navigation.replace("Main"),
-          },
-        ]
-      );
+      // Alert.alert(
+      //   "Welcome back! 👋",
+      //   `Hello ${data.user?.name || "there"}!`,
+      //   [
+      //     {
+      //       text: "Continue",
+      //       // onPress: () => navigation.replace("Main"),
+      //     },
+      //   ]
+      // );
     } else {
       setPassword("");
 
@@ -151,6 +151,7 @@ const handleLogin = async () => {
     if (error.name === "AbortError") {
       Alert.alert("Connection Timeout", "Request timed out. Please check your internet connection and try again.");
     } else {
+      console.log(error.name);
       Alert.alert("Network Error", "Unable to connect to server. Please check your internet connection and try again.");
     }
   } finally {

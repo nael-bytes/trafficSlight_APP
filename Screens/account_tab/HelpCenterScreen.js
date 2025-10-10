@@ -14,8 +14,33 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from 'expo-linear-gradient';
 import axios from "axios";
 import { LOCALHOST_IP } from "@env"; // Replace with your actual IP or API base
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useUser } from "../../AuthContext/UserContext";
 
 export default function HelpCenterScreen({ navigation }) {
+
+  const {user} = useUser();
+  // 🔄 Reset all cache for a specific user
+const resetUserCache = async (userId) => {
+  try {
+    // AsyncStorage.clear();
+    const keys = [
+      `cachedMotors_${userId}`,
+      `cachedTrips_${userId}`,
+      `cachedDestinations_${userId}`,
+      `cachedFuelLogs_${userId}`,
+      `cachedMaintenance_${userId}`,
+      `cachedGasStations_${userId}`,
+    ];
+
+    await AsyncStorage.multiRemove(keys);
+    console.log(`🗑️ Cache cleared for user: ${userId}`);
+  } catch (err) {
+    console.error("Failed to reset cache:", err);
+  }
+};
+
+
   const handleRecalculateAnalytics = async () => {
     try {
       const res = await axios.put(`${LOCALHOST_IP}/api/user-motors/fix-motor-analytics`);
@@ -84,6 +109,14 @@ export default function HelpCenterScreen({ navigation }) {
               Tap the alert button on the main map screen to submit reports like accidents, road closures, or hazards. Your location will be auto-filled.
             </Text>
           </View>
+
+
+          <TouchableOpacity
+      style={tw`bg-[#00ADB5] py-3 rounded-xl items-center`}
+      onPress={() => resetUserCache(user._id)}
+    >
+  <Text style={tw`text-white font-semibold text-lg`}>Reset Cache</Text>
+</TouchableOpacity>
 
           {/* ✅ Added Button at Bottom */}
           <View style={tw`mt-8`}>

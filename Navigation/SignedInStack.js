@@ -2,7 +2,7 @@ import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createStackNavigator } from "@react-navigation/stack";
 import { MaterialCommunityIcons } from "react-native-vector-icons";
-import { useColorScheme } from 'react-native';
+import { useColorScheme, View } from 'react-native';
 
 import ProfileScreen from "../Screens/loggedIn/ProfileScreen";
 
@@ -47,43 +47,92 @@ function MainTabs() {
   const isDarkMode = systemColorScheme === 'dark';
 
   return (
+
     <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarIcon: ({ color, size }) => {
-          let iconName;
+  initialRouteName="Map"
+  screenOptions={({ route }) => ({
+    headerShown: false,
 
-          if (route.name === "Home") {
-            iconName = "home";
-          } else if (route.name === "Map") {
-            iconName = "map";
-          } else if (route.name === "Account") {
-            iconName = "account";
-          }
-
-          return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
-        },
-        tabBarActiveTintColor: "#00ADB5",
-        tabBarInactiveTintColor: isDarkMode ? "#777" : "#666",
-        tabBarStyle: {
+    tabBarIcon: ({ color, size }) => {
+      let iconName;
+      if (route.name === "Map") {
+        iconName = "map";
+      } else if (route.name === "Motors") {
+        iconName = "motorbike";
+      } else if (route.name === "Account") {
+        iconName = "account";
+      }
+      return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
+    },
+    tabBarActiveTintColor: "#00ADB5",
+    tabBarInactiveTintColor: isDarkMode ? "#777" : "#666",
+    tabBarStyle: {
+      backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFAFA',
+      borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+      borderTopWidth: 1,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: isDarkMode ? 0.3 : 0.1,
+      shadowRadius: 3.84,
+      elevation: 5,
+    },
+    // 👇 ito yung force render
+    tabBarBackground: () => (
+      <View
+        style={{
+          flex: 1,
           backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFAFA',
           borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
           borderTopWidth: 1,
-          shadowColor: '#000',
-          shadowOffset: {
-            width: 0,
-            height: -2,
-          },
-          shadowOpacity: isDarkMode ? 0.3 : 0.1,
-          shadowRadius: 3.84,
-          elevation: 5,
-        },
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Map" component={RouteSelectionScreen} />
-      <Tab.Screen name="Account" component={ProfileScreen} />
-    </Tab.Navigator>
+        }}
+      />
+    ),
+  })}
+>
+  <Tab.Screen name="Motors" component={HomeScreen} />
+  <Tab.Screen name="Map" component={RouteSelectionScreen} />
+  <Tab.Screen name="Account" component={ProfileScreen} />
+</Tab.Navigator>
+
+    // <Tab.Navigator
+    //   initialRouteName="Map" //kung saan gusto mo na magstart
+    //   screenOptions={({ route }) => ({
+    //     headerShown: false,
+    //     tabBarIcon: ({ color, size }) => {
+    //       let iconName;
+          
+    //       if (route.name === "Map") {
+    //         iconName = "map";
+    //       } else if (route.name === "Motors") {
+    //         iconName = "motorbike";
+    //       } else if (route.name === "Account") {
+    //         iconName = "account";
+    //       }
+
+    //       return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
+    //     },
+    //     tabBarActiveTintColor: "#00ADB5",
+    //     tabBarInactiveTintColor: isDarkMode ? "#777" : "#666",
+    //     tabBarStyle: {
+    //       backgroundColor: isDarkMode ? '#2A2A2A' : '#FFFAFA',
+    //       borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+    //       borderTopWidth: 1,
+    //       shadowColor: '#000',
+    //       shadowOffset: {
+    //         width: 0,
+    //         height: -2,
+    //       },
+    //       shadowOpacity: isDarkMode ? 0.3 : 0.1,
+    //       shadowRadius: 3.84,
+    //       elevation: 5,
+    //     },
+    //   })}
+    // >
+      
+    //   <Tab.Screen name="Motors" component={HomeScreen} />
+    //   <Tab.Screen name="Map" component={RouteSelectionScreen}  />
+    //   <Tab.Screen name="Account" component={ProfileScreen} />
+    // </Tab.Navigator>
   );
 }
 
@@ -95,6 +144,7 @@ export default function SignedInStack() {
     <Stack.Navigator 
       screenOptions={{ 
         headerShown: false,
+        
         cardStyle: {
           backgroundColor: isDarkMode ? '#1A1A1A' : '#F2EEEE',
         },

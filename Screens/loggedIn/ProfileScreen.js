@@ -91,6 +91,9 @@ const ProfileScreen = ({ navigation }) => {
               <Text style={styles.headerSubtitle}>Manage your account</Text>
             </View>
             <View style={styles.headerAvatar}>
+              <TouchableOpacity>
+
+              </TouchableOpacity>
               <Ionicons name="person-circle" size={48} color="#FFFFFF" />
             </View>
           </View>
@@ -102,7 +105,32 @@ const ProfileScreen = ({ navigation }) => {
         <View style={styles.profileCard}>
           <Text style={styles.welcomeText}>Welcome back,</Text>
           <Text style={styles.userName}>{user?.name}</Text>
+          <Text style={styles.userEmail}>UID: {user?.id}</Text>
           <Text style={styles.userEmail}>{user?.email}</Text>
+        </View>
+
+        {/* Trips Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Trips</Text>
+          <View style={styles.menuContainer}>
+            {renderMenuItem(
+              "flag-outline",
+              "Trips",
+              () => navigation.navigate("TripDetails")
+            )}
+          </View>
+        </View>
+
+        {/* Reports Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Reports</Text>
+          <View style={styles.menuContainer}>
+            {renderMenuItem(
+              "warning-outline",
+              "Traffic Reports",
+              () => navigation.navigate("AlertDetails")
+            )}
+          </View>
         </View>
 
         {/* Account Section */}
@@ -115,11 +143,6 @@ const ProfileScreen = ({ navigation }) => {
               () => navigation.navigate("AccountSettingsScreen")
             )}
             {renderMenuItem(
-              "construct-outline",
-              "Manage Motors",
-              () => navigation.navigate("AddMotorScreen")
-            )}
-            {renderMenuItem(
               "log-out-outline",
               "Logout",
               handleLogout,
@@ -128,24 +151,8 @@ const ProfileScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* App Settings Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>App Settings</Text>
-          <View style={styles.menuContainer}>
-            {renderMenuItem(
-              "color-palette-outline",
-              "Theme",
-              () => {
-                // Theme functionality will be added later
-                Alert.alert(
-                  "Coming Soon",
-                  "Theme customization will be available in the next update.",
-                  [{ text: "OK", style: "default" }]
-                );
-              }
-            )}
-          </View>
-        </View>
+        {/* 
+         */}
 
         {/* Support Section */}
         <View style={styles.section}>
@@ -185,9 +192,9 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 24,
   },
   headerGradient: {
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 16,
-    paddingBottom: 20,
+    padding: 24,
+    paddingTop: Platform.OS === 'ios' ? 20 : 0,
+    paddingBottom: 16,
   },
   headerContent: {
     flexDirection: 'row',

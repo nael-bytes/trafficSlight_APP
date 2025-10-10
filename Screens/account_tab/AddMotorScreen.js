@@ -20,6 +20,7 @@ import { LOCALHOST_IP } from "@env";
 import { useUser } from "../../AuthContext/UserContext";
 import { LinearGradient } from 'expo-linear-gradient';
 
+
 export default function AddMotorScreen({ navigation }) {
   const { user } = useUser();
   const [motorItems, setMotorItems] = useState([]);
@@ -152,7 +153,7 @@ export default function AddMotorScreen({ navigation }) {
         style: "destructive",
         onPress: async () => {
           try {
-            const res = await fetch(`${LOCALHOST_IP}/api/user-motors/user/${id}`, { method: "DELETE" });
+            const res = await fetch(`${LOCALHOST_IP}/api/user-motors/user/${user._id}`, { method: "DELETE" });
             if (!res.ok) throw new Error();
             fetchUserMotors();
             Alert.alert("Deleted", "Motor removed.");
@@ -193,55 +194,65 @@ export default function AddMotorScreen({ navigation }) {
         </View>
 
         <ScrollView style={styles.container}>
-          {/* My Motors List */}
-          <View style={styles.section}>
-            {loading ? (
-              <ActivityIndicator size="large" color="#00ADB5" style={styles.loader} />
-            ) : motorList.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Ionicons name="bicycle-outline" size={48} color="#00ADB5" />
-                <Text style={styles.emptyStateText}>No motors added yet</Text>
-                <Text style={styles.emptyStateSubtext}>
-                  Tap the + button to add your first motorcycle
-                </Text>
-              </View>
-            ) : (
-              motorList.map((item) => (
-                <View key={item._id} style={styles.motorCard}>
-                  <View style={styles.motorInfo}>
-                    <Text style={styles.motorName}>{item.nickname || "Unnamed Motor"}</Text>
-                    <Text style={styles.motorDetail}>Model: {item.name}</Text>
-                    <Text style={styles.motorDetail}>
-                      Fuel Efficiency: {item.fuelEfficiency ? `${item.fuelEfficiency} km/L` : "N/A"}
-                    </Text>
-                  </View>
-                  <View style={styles.actionButtons}>
-                    <TouchableOpacity
-                      style={styles.editButton}
-                      onPress={() => {
-                        setMotorForm({
-                          selectedMotor: item.name,
-                          fuelEfficiency: String(item.fuelEfficiency || ""),
-                          editingId: item._id,
-                        });
-                        setFormInputs({ motorName: item.nickname });
-                        setShowAddForm(true);
-                      }}
-                    >
-                      <Ionicons name="create-outline" size={24} color="#00ADB5" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => handleDelete(item._id, item.nickname)}
-                      style={styles.deleteButton}
-                    >
-                      <Ionicons name="trash-outline" size={24} color="#FF6B6B" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))
-            )}
+  {/* My Motors List */}
+  <View style={styles.section}>
+    {loading ? (
+      <ActivityIndicator size="large" color="#00ADB5" style={styles.loader} />
+    ) : motorList.length === 0 ? (
+      <View style={styles.emptyState}>
+        <Ionicons name="bicycle-outline" size={48} color="#00ADB5" />
+        <Text style={styles.emptyStateText}>No motors added yet</Text>
+        <Text style={styles.emptyStateSubtext}>
+          Tap the + button to add your first motorcycle
+        </Text>
+      </View>
+    ) : (
+      motorList.map((item) => (
+        <View key={item._id} style={styles.motorCard}>
+          {/* Card info clickable */}
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            onPress={() => navigation.navigate("MotorDetails", { item : item})}
+            activeOpacity={0.8}
+          >
+            <View style={styles.motorInfo}>
+              <Text style={styles.motorName}>{item.nickname || "Unnamed Motor"}</Text>
+              <Text style={styles.motorDetail}>Model: {item.name}</Text>
+              <Text style={styles.motorDetail}>
+                Fuel Efficiency: {item.fuelEfficiency ? `${item.fuelEfficiency} km/L` : "N/A"}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Edit/Delete buttons */}
+          <View style={styles.actionButtons}>
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => {
+                setMotorForm({
+                  selectedMotor: item.name,
+                  fuelEfficiency: String(item.fuelEfficiency || ""),
+                  editingId: item._id,
+                });
+                setFormInputs({ motorName: item.nickname });
+                setShowAddForm(true);
+              }}
+            >
+              <Ionicons name="create-outline" size={24} color="#00ADB5" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => handleDelete(item._id, item.nickname)}
+              style={styles.deleteButton}
+            >
+              <Ionicons name="trash-outline" size={24} color="#FF6B6B" />
+            </TouchableOpacity>
           </View>
-        </ScrollView>
+        </View>
+      ))
+    )}
+  </View>
+</ScrollView>
+
 
         {/* Add Motor FAB */}
         <TouchableOpacity 

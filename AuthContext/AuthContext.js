@@ -5,14 +5,21 @@ export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [userToken, setUserToken] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
     const checkToken = async () => {
-      const token = await AsyncStorage.getItem("token");
-      setUserToken(token);
+      try {
+        const token = await AsyncStorage.getItem("token");
+        setUserToken(token);
+      } catch (error) {
+        console.error("❌ Error checking token:", error);
+      } finally {
+        setAuthLoading(false);
+      }
     };
     checkToken();
-  }, []);
+  }, [])
 
   const login = async (token) => {
     await AsyncStorage.setItem("token", token);
@@ -25,7 +32,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ userToken, login, logout }}>
+    <AuthContext.Provider value={{ userToken, login, logout, authLoading  }}>
       {children}
     </AuthContext.Provider>
   );

@@ -62,9 +62,36 @@ export default function FuelCalculatorScreen() {
     return !filled;
   };
 
+//Fuel efficiency calculator
+// Add new states
+const [prevOdo, setPrevOdo] = useState('');
+const [currOdo, setCurrOdo] = useState('');
+const [fuelConsumed, setFuelConsumed] = useState('');
+const [calculatedEfficiency, setCalculatedEfficiency] = useState(null);
+
+// Function to calculate efficiency from odometer
+const calculateEfficiencyFromOdo = () => {
+  const prev = parseFloat(prevOdo);
+  const curr = parseFloat(currOdo);
+  const fuel = parseFloat(fuelConsumed);
+
+  if (isNaN(prev) || isNaN(curr) || isNaN(fuel) || curr <= prev || fuel <= 0) {
+    return;
+  }
+
+  const efficiency = (curr - prev) / fuel;
+  setCalculatedEfficiency(efficiency);
+  setManualEfficiency(efficiency.toFixed(2)); // auto-fill manual efficiency field
+};
+
+
+
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#00ADB5" />
+      
+
       
       {/* Header */}
       <View style={styles.header}>
@@ -91,6 +118,55 @@ export default function FuelCalculatorScreen() {
 
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         <View style={styles.card}>
+        <Text style={styles.label}>Old Motorcycle Efficiency (via Odometer)</Text>
+
+<TextInput
+  style={styles.input}
+  value={prevOdo}
+  onChangeText={setPrevOdo}
+  keyboardType="numeric"
+  placeholder="Previous Odometer (km)"
+  placeholderTextColor="#999"
+/>
+
+<TextInput
+  style={styles.input}
+  value={currOdo}
+  onChangeText={setCurrOdo}
+  keyboardType="numeric"
+  placeholder="Current Odometer (km)"
+  placeholderTextColor="#999"
+/>
+
+<TextInput
+  style={styles.input}
+  value={fuelConsumed}
+  onChangeText={setFuelConsumed}
+  keyboardType="numeric"
+  placeholder="Fuel Consumed (L)"
+  placeholderTextColor="#999"
+/>
+
+<TouchableOpacity
+  style={styles.button}
+  onPress={calculateEfficiencyFromOdo}
+>
+  <LinearGradient
+    colors={['#00ADB5', '#00C2CC']}
+    style={styles.buttonGradient}
+    start={{ x: 0, y: 0 }}
+    end={{ x: 1, y: 0 }}
+  >
+    <Text style={styles.buttonText}>Calculate Efficiency</Text>
+  </LinearGradient>
+</TouchableOpacity>
+
+{calculatedEfficiency && (
+  <Text style={{ marginTop: 8, fontSize: 16, color: '#00ADB5' }}>
+    Calculated Efficiency: {calculatedEfficiency.toFixed(2)} km/L
+  </Text>
+)}
+
           <Text style={styles.label}>Distance (km)</Text>
           <TextInput
             style={styles.input}

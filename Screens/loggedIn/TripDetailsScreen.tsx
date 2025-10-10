@@ -11,12 +11,14 @@ import {
   StatusBar,
   SafeAreaView,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { MaterialIcons, Ionicons } from "@expo/vector-icons";
 import axios from "axios";
 import { useUser } from "../../AuthContext/UserContext";
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from "expo-linear-gradient";
 
 const API_BASE = "https://ts-backend-1-jyit.onrender.com";
+const CACHE_KEY = "cachedTrips";
 
 export default function TripScreen({ navigation }) {
   const { user } = useUser();
@@ -34,12 +36,33 @@ export default function TripScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const calculateSummary = (tripsData) => {
+    return {
+      totalTrips: tripsData.length,
+      totalDistance: tripsData.reduce((acc, t) => acc + (parseFloat(t.distance) || 0), 0),
+      totalFuel: tripsData.reduce((acc, t) => acc + (parseFloat(t.fuelUsed) || 0), 0),
+      totalTime: tripsData.reduce((acc, t) => acc + (parseFloat(t.duration) || 0), 0),
+      totalExpense: tripsData.reduce((acc, t) => acc + ((parseFloat(t.fuelUsed) || 0) * 100), 0),
+    };
+  };
+
   const fetchTrips = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_BASE}/api/trips/user/${user._id}`);
-      const data = res.data;
 
+      // Load cached trips first
+      const cached = await AsyncStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const cachedData = JSON.parse(cached);
+        setTrips(cachedData);
+        setSummary(calculateSummary(cachedData));
+      }
+
+      // Fetch from API
+      const res = await axios.get(`${API_BASE}/api/trips/user/${user._id}`);
+      let data = res.data;
+
+      // Filter based on motor & time
       const now = new Date();
       const filtered = data.filter((trip) => {
         const created = new Date(trip.createdAt);
@@ -50,21 +73,18 @@ export default function TripScreen({ navigation }) {
         } else if (filter === "week") {
           const diff = (now - created) / (1000 * 60 * 60 * 24);
           return diff <= 7;
-        } else {
+        } else if (filter === "month") {
           return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
+        } else {
+          return created.getFullYear() === now.getFullYear();
         }
       });
 
-      const totals = {
-        totalTrips: filtered.length,
-        totalDistance: filtered.reduce((acc, t) => acc + t.distance, 0),
-        totalFuel: filtered.reduce((acc, t) => acc + t.fuelUsed, 0),
-        totalTime: filtered.reduce((acc, t) => acc + t.timeArrived, 0),
-        totalExpense: filtered.reduce((acc, t) => acc + t.fuelUsed * 100, 0),
-      };
-
       setTrips(filtered);
-      setSummary(totals);
+      setSummary(calculateSummary(filtered));
+
+      // Cache trips
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(filtered));
     } catch (err) {
       console.error("Trip fetch error:", err);
     } finally {
@@ -92,26 +112,39 @@ export default function TripScreen({ navigation }) {
   const TripCard = ({ trip }) => (
     <View style={styles.tripCard}>
       <View style={styles.tripHeader}>
-        <Ionicons name="bicycle" size={18} color="#00ADB5" />
+        <MaterialIcons name="two-wheeler" size={20} color="#00ADB5" />
         <Text style={styles.tripTitle}>{trip.motorId?.nickname || trip.motorId?.model || "Motor"}</Text>
       </View>
-      <Text style={styles.tripText}>
-        <Ionicons name="map-outline" size={16} /> {trip.distance.toFixed(1)} km
-      </Text>
-      <Text style={styles.tripText}>
-        <Ionicons name="time-outline" size={16} />
-        ETA: {trip.eta || "N/A"} / Arrived: {trip.timeArrived || "N/A"}
-      </Text>
-      <Text style={styles.tripText}>
-        <Ionicons name="timer-outline" size={16} />
-        Duration: {trip.duration ? `${trip.duration} min` : "N/A"}
-      </Text>
-      <Text style={styles.tripText}>
-        <Ionicons name="location-outline" size={16} /> {trip.destination}
-      </Text>
+
+      <View style={styles.tripRow}>
+        <Ionicons name="map-outline" size={20} color="#666" />
+        <Text style={styles.tripText}>
+          {trip.distance.toFixed(1)} km
+        </Text>
+      </View>
+
+      <View style={styles.tripRow}>
+        <Ionicons name="time-outline" size={20} color="#666" />
+        <Text style={styles.tripText}>
+          ETA: { trip.eta || "N/A"} / Arrived: {trip.timeArrived || "N/A"}
+        </Text>
+      </View>
+
+      <View style={styles.tripRow}>
+        <Ionicons name="timer-outline" size={20} color="#666" />
+        <Text style={styles.tripText}>
+          Duration: {trip.duration ? `${trip.duration} min` : "N/A"}
+        </Text>
+      </View>
+
+      <View style={styles.tripRow}>
+        <Ionicons name="location-outline" size={20} color="#666" />
+        <Text style={styles.tripText}>
+          {trip.destination}
+        </Text>
+      </View>
     </View>
   );
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#00ADB5" />
@@ -191,14 +224,14 @@ export default function TripScreen({ navigation }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Filter by Time</Text>
           <View style={styles.filterRow}>
-            {["today", "week", "month"].map((f) => (
+            {["today", "week", "month", "year"].map((f) => (
               <TouchableOpacity
                 key={f}
                 style={[styles.filterBtn, filter === f && styles.filterActive]}
                 onPress={() => setFilter(f)}
               >
                 <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-                  {f === "today" ? "Today" : f === "week" ? "Last 7d" : "This Month"}
+                  {f === "today" ? "Today" : f === "week" ? "Last 7d" : f === "month" ? "This Month" : "This Year"}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -235,7 +268,7 @@ export default function TripScreen({ navigation }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Trip History</Text>
           {loading ? (
-            <ActivityIndicator size="large" color="#00ADB5" style={styles.loader} />
+            <ActivityIndicator size="large" color="#00ADB5" style={styles.loader} /> 
           ) : trips.length === 0 ? (
             <View style={styles.emptyState}>
               <Ionicons name="document-text-outline" size={48} color="#00ADB5" />
@@ -408,7 +441,7 @@ const styles = StyleSheet.create({
   },
   tripCard: {
     backgroundColor: '#FFFAFA',
-    padding: 16,
+    padding: 10,
     borderRadius: 16,
     marginBottom: 12,
     shadowColor: '#000',
@@ -431,11 +464,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
   },
-  tripText: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
+  tripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
   },
+  
+  tripText: {
+    fontSize: 16,
+    color: '#666666',
+    marginLeft: 4, // spacing between icon and text
+  },
+  
   loader: {
     marginTop: 20,
   },

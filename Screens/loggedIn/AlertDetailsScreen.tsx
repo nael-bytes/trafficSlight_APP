@@ -1,4 +1,3 @@
-// ✅ TrafficReportsScreen with Reverse Geocoding
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -14,58 +13,128 @@ import {
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { LOCALHOST_IP, GOOGLE_MAPS_API_KEY } from "@env";
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from "expo-linear-gradient";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const CACHE_KEY = "cachedReports";
 
 export default function TrafficReportsScreen({ navigation }) {
-  const [reports, setReports] = useState([]);
+  const [reports, setReports] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
+  // ✅ Load cached data first
+  const loadCachedReports = async () => {
+    try {
+      const cached = await AsyncStorage.getItem(CACHE_KEY);
+      if (cached) {
+        setReports(JSON.parse(cached));
+        setLoading(false); // show cached instantly
+      }
+    } catch (err) {
+      console.warn("Failed to load cached reports:", err);
+    }
+  };
+
+  // ✅ Save reports to cache
+  const cacheReports = async (data: any[]) => {
+    try {
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    } catch (err) {
+      console.warn("Failed to cache reports:", err);
+    }
+  };
 
   const fetchReports = async () => {
     try {
       const response = await fetch(`${LOCALHOST_IP}/api/reports`);
       const data = await response.json();
+
       setReports(data);
+      cacheReports(data); // ✅ cache the fresh reports
     } catch (error) {
-      console.error("Failed to fetch reports", error);
+      console.error("❌ Failed to fetch reports", error);
     } finally {
       setLoading(false);
     }
   };
+  const updateReportAddress = async (reportId, address) => {
+    try {
+      // Build body dynamically
+      const body = {};
+      if (address && address.trim() !== "") {
+        body.address = address;
+      }
+  
+      await fetch(`${LOCALHOST_IP}/api/reports/${reportId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+  
+      console.log(
+        body.address
+          ? `✅ Report ${reportId} updated with address: ${body.address}`
+          : `⚠️ Report ${reportId} not updated (no address provided)`
+      );
+    } catch (err) {
+      console.error("❌ Failed to update report address:", err);
+    }
+  };
+  
 
   useEffect(() => {
+    // 1. Load cached first
+    loadCachedReports();
+    // 2. Then fetch fresh from API
     fetchReports();
+    // 3. update to backend
+    
   }, []);
 
-  const getAddressFromCoords = async (lat, lng) => {
+  const getAddressFromCoords = async (lat: number, lng: number) => {
     try {
       const response = await fetch(
         `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
       );
       const data = await response.json();
-      if (data.results.length > 0) {
-        return data.results[0].formatted_address;
-      } else {
-        return "Unknown address";
-      }
+      return data.results.length > 0
+        ? data.results[0].formatted_address
+        : "Unknown address";
     } catch (error) {
       console.error("Reverse geocoding error:", error);
       return "Failed to fetch address";
     }
   };
 
-  const ReportCard = ({ report }) => {
-    const [address, setAddress] = useState("Resolving address...");
+  const ReportCard = ({ report }: any) => {
+    const [address, setAddress] = useState(report.address || "Resolving...");
 
     useEffect(() => {
-      getAddressFromCoords(report.location.latitude, report.location.longitude)
-        .then(setAddress);
+      
+      if (!report.address || report.address == "Resolving...") {
+        getAddressFromCoords(
+          report.location.latitude,
+          report.location.longitude
+        ).then((addr) => {
+          setAddress(addr);
+          // optionally update server & cache
+          report.address = addr;
+          cacheReports([...reports]);
+          updateReportAddress(report._id,address)
+        });
+      }
     }, []);
 
     return (
       <View style={styles.reportCard}>
         <View style={styles.reportHeader}>
-          <Ionicons name="alert-circle" size={24} color="#00ADB5" style={styles.reportIcon} />
+          <Ionicons
+            name="alert-circle"
+            size={24}
+            color="#00ADB5"
+            style={styles.reportIcon}
+          />
           <Text style={styles.reportTitle}>{report.reportType}</Text>
         </View>
         <Text style={styles.reportDescription}>{report.description}</Text>
@@ -74,49 +143,33 @@ export default function TrafficReportsScreen({ navigation }) {
     );
   };
 
-  const filtered = reports.filter((r) =>
-    r.reportType.toLowerCase().includes(search.toLowerCase()) ||
-    r.description?.toLowerCase().includes(search.toLowerCase())
+  const filtered = reports.filter(
+    (r) =>
+      r.reportType.toLowerCase().includes(search.toLowerCase()) ||
+      r.description?.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#00ADB5" />
-      
-      {/* Header */}
-      <View style={styles.header}>
-        <LinearGradient
-          colors={['#00ADB5', '#00C2CC']}
-          style={styles.headerGradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-        >
-          <View style={styles.headerContent}>
-            <TouchableOpacity 
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-            >
-              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-            <View style={styles.headerTextContainer}>
-              <Text style={styles.headerTitle}>Traffic Reports</Text>
-              <Text style={styles.headerSubtitle}>View road alerts and hazards</Text>
-            </View>
-          </View>
-        </LinearGradient>
-      </View>
+      {/* ... your header code remains the same ... */}
 
       <View style={styles.container}>
         {/* Search Bar */}
         <View style={styles.searchContainer}>
           <View style={styles.searchBox}>
-            <Ionicons name="search-outline" size={20} color="#666666" style={styles.searchIcon} />
+            <Ionicons
+              name="search-outline"
+              size={20}
+              color="#666"
+              style={styles.searchIcon}
+            />
             <TextInput
               value={search}
               onChangeText={setSearch}
               placeholder="Search reports..."
               style={styles.searchInput}
-              placeholderTextColor="#999999"
+              placeholderTextColor="#999"
             />
           </View>
         </View>
@@ -127,40 +180,28 @@ export default function TrafficReportsScreen({ navigation }) {
             <ActivityIndicator size="large" color="#00ADB5" />
           </View>
         ) : (
-          <>
-            <FlatList
-              data={filtered}
-              keyExtractor={(item) => item._id}
-              renderItem={({ item }) => <ReportCard report={item} />}
-              ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  <Ionicons name="alert-circle-outline" size={48} color="#00ADB5" />
-                  <Text style={styles.emptyStateText}>No reports found</Text>
-                </View>
-              }
-              contentContainerStyle={styles.listContainer}
-            />
-            
-            {/* Add Report FAB */}
-            <TouchableOpacity 
-              style={styles.fab}
-              onPress={() => {}}
-            >
-              <LinearGradient
-                colors={['#00ADB5', '#00C2CC']}
-                style={styles.fabGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <Ionicons name="add" size={24} color="#FFFFFF" />
-              </LinearGradient>
-            </TouchableOpacity>
-          </>
+          <FlatList
+            data={filtered}
+            keyExtractor={(item) => item._id}
+            renderItem={({ item }) => <ReportCard report={item} />}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Ionicons
+                  name="alert-circle-outline"
+                  size={48}
+                  color="#00ADB5"
+                />
+                <Text style={styles.emptyStateText}>No reports found</Text>
+              </View>
+            }
+            contentContainerStyle={styles.listContainer}
+          />
         )}
       </View>
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   safeArea: {

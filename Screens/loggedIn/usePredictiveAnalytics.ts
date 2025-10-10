@@ -33,7 +33,8 @@ export const usePredictiveAnalytics = (input: PredictiveInput) => {
       text1,
       text2,
       position: 'top',
-      visibilityTime: 3000,
+
+      visibilityTime: 5000,
     });
   };
 
@@ -50,6 +51,7 @@ export const usePredictiveAnalytics = (input: PredictiveInput) => {
 
   // 🕒 Check Idle Time
   const startIdleCheck = () => {
+    // console.log('idle checking...');
     idleTimer.current = setInterval(() => {
       const now = Date.now();
       if (now - lastMovement.current > 30_000) {
@@ -60,7 +62,7 @@ export const usePredictiveAnalytics = (input: PredictiveInput) => {
     }, 10_000);
   };
 
-  // ⛽ Fuel Check
+  // ⛽ Fuel Check + dito yung sa may ttatanungin kung magpapagas ba sya or what.
   const checkFuelStatus = () => {
     if (input.currentFuelLevel && input.currentFuelLevel <= 20) {
       showToast('Fuel Alert', 'Fuel level is low (20% or less). Consider refueling soon.');
@@ -132,12 +134,12 @@ export const usePredictiveAnalytics = (input: PredictiveInput) => {
     }
 
     // Too many idle events in short span
-    const now = Date.now();
-    const recentIdles = idleEvents.filter((t) => now - t < 5 * 60 * 1000); // last 5 mins
-    if (recentIdles.length >= 3) {
-      showToast('Frequent Stops', 'You’ve stopped frequently in a short time.');
-      setIdleEvents([]);
-    }
+    // const now = Date.now();
+    // const recentIdles = idleEvents.filter((t) => now - t < 5 * 60 * 1000); // last 5 mins
+    // if (recentIdles.length >= 3) {
+    //   showToast('Frequent Stops', 'You’ve stopped frequently in a short time.');
+    //   setIdleEvents([]);
+    // }
   };
 
   useEffect(() => {

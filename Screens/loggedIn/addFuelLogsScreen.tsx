@@ -13,7 +13,8 @@ import DropDownPicker from "react-native-dropdown-picker";
 import axios from "axios";
 import { useUser } from "../../AuthContext/UserContext";
 import { useNavigation } from "@react-navigation/native";
-
+import { LOCALHOST_IP } from "@env";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 const API_BASE = "https://ts-backend-1-jyit.onrender.com";
 
 export default function AddFuelLogScreen() {
@@ -38,6 +39,21 @@ export default function AddFuelLogScreen() {
 
   const fetchMotors = async () => {
     try {
+      // ✅ 1. Try loading cache first
+      const cached = await AsyncStorage.getItem(`motors_${user._id}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        setMotors(parsed);
+        setItems(
+          parsed.map((motor) => ({
+            label: motor.nickname || motor.name,
+            value: motor._id,
+          }))
+        );
+        console.log("Loaded motors from cache:", parsed);
+      }
+
+      // ✅ 2. Always fetch fresh data (to update cache)
       const res = await axios.get(`${API_BASE}/api/user-motors/user/${user._id}`);
       setMotors(res.data);
       setItems(
@@ -46,12 +62,13 @@ export default function AddFuelLogScreen() {
           value: motor._id,
         }))
       );
-      console.log("Fetched motors:", res.data);
-      console.log("Dropdown items:", items);
-      console.log("User ID:", user._id);
-      console.log("User data:", user);
+
+      // ✅ 3. Update cache with fresh data
+      await AsyncStorage.setItem(`cachedMotors_${user._id}`, JSON.stringify(res.data));
+
+      console.log("Fetched motors from API:", res.data);
     } catch (err) {
-      console.error("Failed to fetch motorss", err);
+      console.error("Failed to fetch motors", err);
     }
   };
 
@@ -103,6 +120,10 @@ export default function AddFuelLogScreen() {
     }
   };
 
+  useEffect(() => {
+
+    console.log("selectedMotor");
+  });
   const handleConfirm = async () => {
     try {
       const payload = {
@@ -111,10 +132,22 @@ export default function AddFuelLogScreen() {
         liters: parseFloat(liters),
         pricePerLiter: parseFloat(pricePerLiter),
       };
+      const newFuelLevel =
+        (parseFloat(liters) / selectedMotor.motorcycleId.fuelTank) * 100;
 
+        console.log(newFuelLevel);
+        console.log(newFuelLevel);
+      updateFuelLevel(selectedMotor._id, newFuelLevel);
+      console.log(newFuelLevel);
       await axios.post(`${API_BASE}/api/fuel-logs`, payload);
+
+      
       setShowModal(false);
       Alert.alert("Success", "Fuel log added successfully.");
+
+      // ✅ Force refresh cache after new log
+      fetchMotors();
+
       navigation.goBack();
     } catch (err) {
       console.error("Failed to add fuel log", err);
@@ -122,12 +155,34 @@ export default function AddFuelLogScreen() {
     }
   };
 
-  const handleSubmit = () => {
-    if (!selectedMotor || !liters || !pricePerLiter || !totalCost) {
-      return Alert.alert("Missing Fields", "Please complete at least two values.");
+  const updateFuelLevel = async (motorId: string, newFuelLevel: number) => {
+    try {
+      const response = await fetch(`${LOCALHOST_IP}/api/user-motors/${motorId}/fuel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentFuelLevel: newFuelLevel }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to update fuel level: ${response.status} ${errorText}`);
+      }
+
+      const updatedMotor = await response.json();
+      console.log("✅ Fuel level updated:", updatedMotor);
+    } catch (error: any) {
+      console.error("❌ Error in updateFuelLevel:", error);
     }
-    setShowModal(true);
   };
+
+const handleSubmit = () => {
+  if (!selectedMotor || !liters || !pricePerLiter || !totalCost) {
+    return Alert.alert("Missing Fields", "Please complete at least two values.");
+  }
+  setShowModal(true);
+};
+
+
 
 return (
   <ScrollView contentContainerStyle={styles.container}>

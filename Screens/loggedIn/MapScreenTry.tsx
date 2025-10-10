@@ -13,6 +13,7 @@ import {
   Alert,
   TextInput,
   Animated,
+  Image,
 } from "react-native";
 import MaterialIcons from "react-native-vector-icons/MaterialIcons";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -28,12 +29,14 @@ import polyline from "@mapbox/polyline";
 import { GOOGLE_MAPS_API_KEY, LOCALHOST_IP } from "@env";
 import { useUser } from "../../AuthContext/UserContext";
 
+
 import SearchBar from "./SearchBar";
 import "react-native-get-random-values";
 import { usePredictiveAnalytics } from './usePredictiveAnalytics';
 import Speedometer from "./Speedometer";
 import { calculateTotalPathDistance, calcDistance } from '../screens/utils/mapUtils';
-
+import _ from 'lodash';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 // Types
 type LocationCoords = {
   latitude: number;
@@ -135,7 +138,14 @@ interface Motor {
   analytics: MotorAnalytics;
   nickname?: string;
   engineDisplacement?: number;
+  totalDrivableDistanceWithCurrentGas?: number;
+  totalDrivableDistance?: number;
+  motorcycleData?: {
+    fuelTank: number;
+
+  };
 }
+
 
 // ----------------------------------------------------------------
 // Constants
@@ -155,9 +165,6 @@ const calculateFuelRange = (distance: number, fuelEfficiency: number) => {
     avg: base,
   };
 };
-
-
-
 
 //calculateFuelRange(100, 20); // Example usage: 100 km distance, 20 km/L fuel efficiency
 
@@ -308,16 +315,24 @@ const RouteDetailsBottomSheet = React.memo(
                   <Text style={styles.recommendedText}>Recommended Route</Text>
                 </View>
               )}
-              
+
               <View style={styles.routeDetail}>
                 <View style={styles.iconContainer}>
                   <MaterialIcons name="local-gas-station" size={24} color="#00ADB5" />
                 </View>
                 <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Estimated Fuel</Text>
+                  <Text style={styles.detailLabel}>Estimated Fuel </Text>
                   <Text style={styles.detailValue}>
-                    {(route.fuelEstimate - 0.03).toFixed(2)}–{(route.fuelEstimate + 0.03).toFixed(2)} L
+                    {
+
+                      route.fuelEstimate <= 0.02
+                        ? "~0 L"
+                        : `${Math.max(0.1, (route.fuelEstimate - 0.03)).toFixed(2)}L – ${Math.max(
+                          0.1,
+                          (route.fuelEstimate + 0.03)
+                        ).toFixed(2)} L`}
                   </Text>
+
                 </View>
               </View>
 
@@ -365,6 +380,7 @@ const RouteDetailsBottomSheet = React.memo(
 );
 
 
+// NEED NA MAPALITAN OR MAILIPAT SA ROUTESELECTION LAHAT.
 const TrafficIncidentMarker = ({ incident }: { incident: TrafficIncident }) => (
   <Marker coordinate={incident.location}>
     <View style={styles.incidentMarker}>
@@ -374,8 +390,8 @@ const TrafficIncidentMarker = ({ incident }: { incident: TrafficIncident }) => (
             incident.type === "Hazard" ? "report-problem" :
               incident.type === "Road Closure" ? "block" :
                 incident.type === "Traffic Jam" ? "traffic" :
-                  incident.type === "Police" ? "local-police" :
-                    "info"
+
+                  "info"
         }
         size={24}
         color={incident.severity === "high" ? "#e74c3c" : "#f39c12"}
@@ -384,6 +400,55 @@ const TrafficIncidentMarker = ({ incident }: { incident: TrafficIncident }) => (
     </View>
   </Marker>
 );
+
+const getIcon = (type) => {
+  switch (type) {
+    case "Accident": return require("../../assets/icons/ROAD INCIDENTS ICON/Road_Accident.png");
+
+    case "Traffic Jam": return require("../../assets/icons/ROAD INCIDENTS ICON/Traffic_Jam.png");
+    case "Hazard": return require("../../assets/icons/ROAD INCIDENTS ICON/Hazard.png");
+    case "Road Closure": return require("../../assets/icons/ROAD INCIDENTS ICON/Road_Closure.png");
+    //GAS STATIONS
+    case "Caltex": return require("../../assets/icons/GAS_STATIONS/CALTEX.png");
+    case "Cleanfuel": return require("../../assets/icons/GAS_STATIONS/CLEANFUEL.png");
+    case "Flying V": return require("../../assets/icons/GAS_STATIONS/FLYINGV.png");
+    case "Jetti": return require("../../assets/icons/GAS_STATIONS/JETTI.png");
+    case "Petro Gazz": return require("../../assets/icons/GAS_STATIONS/PETROGAZZ.png");
+    case "Petron": return require("../../assets/icons/GAS_STATIONS/PETRON.png");
+    case "Phoenix": return require("../../assets/icons/GAS_STATIONS/PHOENIX.png");
+    case "Rephil": return require("../../assets/icons/GAS_STATIONS/REPHIL.png");
+    case "Seaoil": return require("../../assets/icons/GAS_STATIONS/SEAOIL.png");
+    case "Shell": return require("../../assets/icons/GAS_STATIONS/SHELL.png");
+    case "Total": return require("../../assets/icons/GAS_STATIONS/TOTAL.png");
+    case "Unioil": return require("../../assets/icons/GAS_STATIONS/UNIOIL.png");
+    default: return require("../../assets/icons/default.png");
+  }
+};
+
+// const [showFuelModal, setShowFuelModal] = useState(false);
+//   const [fuelLevelInput, setFuelLevelInput] = useState(0);
+
+// Update backend
+// const updateFuelLevel = async (motorID: [any], fuelLevel: [Number]) => {
+//   try {
+//     const response = await fetch(`https://ts-backend-1-jyit.onrender.com/api/user-motors/${motorID}`, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify({
+
+//         fuelLevel: Number(fuelLevel),
+//       }),
+//     });
+
+//     if (!response.ok) throw new Error("Failed to update fuel level");
+
+//     Alert.alert("Success", "Fuel level updated successfully!");
+//     setFuelLevelInput(0);
+//     setShowFuelModal(false);
+//   } catch (error) {
+//     Alert.alert("Error", error.message);
+//   }
+// };
 
 // ----------------------------------------------------------------
 // Main Component
@@ -397,6 +462,30 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   // Authenticated user context
   const { user } = useUser();
 
+  useEffect(() => {
+    const loadCachedData = async () => {
+      try {
+
+        const cachedMotors = await AsyncStorage.getItem(`cachedMotors_${user._id}`);
+
+        if (cachedMotors) {
+          setMotorList(JSON.parse(cachedMotors));
+          const motorsWithAnalytics = await fetchMotorAnalytics(user._id);
+          if (motorsWithAnalytics.length > 0) {
+            setMotorList(motorsWithAnalytics);
+            setSelectedMotor(motorsWithAnalytics[0]);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load cache:", err);
+      }
+    };
+
+    loadCachedData();
+  }, []);
+
+  const [showFuelModal, setShowFuelModal] = useState(false);
+  const [fuelLevelInput, setFuelLevelInput] = useState(0);
   // Fetch motors when user is available
   useEffect(() => {
     const fetchMotors = async () => {
@@ -419,10 +508,12 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
     if (user?._id) fetchMotors();
   }, [user]);
 
+
+  const [x, setXValue] = useState(0);
   // UI and State
   const [searchText, setSearchText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(true);
   const [showBottomSheet, setShowBottomSheet] = useState(false);
   const [tripSummaryModalVisible, setTripSummaryModalVisible] = useState(false);
@@ -455,6 +546,13 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   const [wasRerouted, setWasRerouted] = useState(false);
   const [startAddress, setStartAddress] = useState("");
 
+  //fuelLevel
+  const [fuelLevel, setFuelLevel] = useState(0);
+
+  //refresh
+
+
+
   // Motor selection state
   const [motorList, setMotorList] = useState<Motor[]>([]);
   const [selectedMotor, setSelectedMotor] = useState<Motor | null>(null);
@@ -462,232 +560,219 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   // Selected route (memoized from state)
   const [selectedRoute, setSelectedRoute] = useState<RouteData | null>(null);
 
-  // Add maintenance action types
-  type MaintenanceAction = {
-    type: 'oil_change' | 'refuel' | 'tune_up';
-    timestamp: number;
-    location: LocationCoords;
-    details: {
-      cost?: number;
-      quantity?: number;
-      notes?: string;
-    };
+
+// Define maintenance action type
+type MaintenanceAction = {
+  type: 'oil_change' | 'refuel' | 'tune_up';
+  timestamp: number;
+  location: LocationCoords;
+  details: {
+    cost?: number;
+    quantity?: number;
+    notes?: string;
   };
+};
 
-  // Add state for maintenance actions
-  const [maintenanceActions, setMaintenanceActions] = useState<MaintenanceAction[]>([]);
+// State
+const [maintenanceActions, setMaintenanceActions] = useState<MaintenanceAction[]>([]);
+const [maintenanceFormVisible, setMaintenanceFormVisible] = useState(false);
+const [maintenanceFormData, setMaintenanceFormData] = useState({
+  type: '' as MaintenanceAction['type'] | '',
+  cost: '',
+  quantity: '',
+  notes: ''
+});
 
-  // Add state for maintenance form
-  const [maintenanceFormVisible, setMaintenanceFormVisible] = useState(false);
-  const [maintenanceFormData, setMaintenanceFormData] = useState({
-    type: '',
-    cost: '',
-    quantity: '',
-    notes: ''
-  });
+// Handle input changes
+const handleMaintenanceFormChange = useCallback((field: keyof typeof maintenanceFormData, value: string) => {
+  setMaintenanceFormData(prev => ({ ...prev, [field]: value }));
+}, []);
 
-  // Memoize the form change handler
-  const handleMaintenanceFormChange = useCallback((field: string, value: string) => {
-    setMaintenanceFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  }, []);
+// Handle save
+const handleMaintenanceFormSave = useCallback(() => {
+  if (!maintenanceFormData.type) return;
+  saveMaintenanceRecord(maintenanceFormData.type, maintenanceFormData);
+}, [maintenanceFormData]);
 
-  // Memoize the save handler
-  const handleMaintenanceFormSave = useCallback(() => {
-    setMaintenanceFormVisible(false);
-    saveMaintenanceRecord(maintenanceFormData.type as MaintenanceAction['type'], maintenanceFormData);
-  }, [maintenanceFormData]);
+// Maintenance form modal component
+const MaintenanceFormModal = useMemo(() => {
+  return ({
+    visible,
+    formData,
+    onClose,
+    onSave,
+    onChange
+  }: {
+    visible: boolean;
+    formData: typeof maintenanceFormData;
+    onClose: () => void;
+    onSave: () => void;
+    onChange: (field: keyof typeof maintenanceFormData, value: string) => void;
+  }) => (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={styles.formModal}>
+          <Text style={styles.formTitle}>
+            {formData.type
+              .split('_')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ')}
+          </Text>
 
-  // Memoize the MaintenanceFormModal component
-  const MaintenanceFormModal = useMemo(() => {
-    return ({ 
-      visible, 
-      formData, 
-      onClose, 
-      onSave, 
-      onChange 
-    }: {
-      visible: boolean;
-      formData: {
-        type: string;
-        cost: string;
-        quantity: string;
-        notes: string;
-      };
-      onClose: () => void;
-      onSave: () => void;
-      onChange: (field: string, value: string) => void;
-    }) => (
-      <Modal
-        visible={visible}
-        transparent
-        animationType="slide"
-        onRequestClose={onClose}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.formModal}>
-            <Text style={styles.formTitle}>
-              {formData.type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
-            </Text>
-            
+          {/* Cost */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Cost (₱)</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="numeric"
+              value={formData.cost}
+              onChangeText={text => onChange('cost', text)}
+              placeholder="Enter cost"
+            />
+          </View>
+
+          {/* Quantity (show for refuel or oil_change) */}
+          {['refuel', 'oil_change'].includes(formData.type) && (
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Cost (₱)</Text>
+              <Text style={styles.inputLabel}>
+                {formData.type === 'refuel' ? 'Fuel Quantity (L)' : 'Oil Quantity (L)'}
+              </Text>
               <TextInput
                 style={styles.input}
                 keyboardType="numeric"
-                value={formData.cost}
-                onChangeText={(text) => onChange('cost', text)}
-                placeholder="Enter cost"
+                value={formData.quantity}
+                onChangeText={text => onChange('quantity', text)}
+                placeholder="Enter quantity in liters"
               />
             </View>
+          )}
 
-            {formData.type === 'refuel' && (
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Fuel Quantity (L)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.quantity}
-                  onChangeText={(text) => onChange('quantity', text)}
-                  placeholder="Enter quantity in liters"
-                />
-              </View>
-            )}
+          {/* Notes */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.inputLabel}>Notes</Text>
+            <TextInput
+              style={[styles.input, styles.notesInput]}
+              value={formData.notes}
+              onChangeText={text => onChange('notes', text)}
+              placeholder={`Add notes about the ${formData.type.replace('_', ' ')} (optional)`}
+              multiline
+            />
+          </View>
 
-            {formData.type === 'oil_change' && (
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Oil Quantity (L)</Text>
-                <TextInput
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={formData.quantity}
-                  onChangeText={(text) => onChange('quantity', text)}
-                  placeholder="Enter quantity in liters"
-                />
-              </View>
-            )}
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Notes</Text>
-              <TextInput
-                style={[styles.input, styles.notesInput]}
-                value={formData.notes}
-                onChangeText={(text) => onChange('notes', text)}
-                placeholder={`Add notes about the ${formData.type.replace('_', ' ')} (optional)`}
-                multiline
-              />
-            </View>
-
-            <View style={styles.formButtons}>
-              <TouchableOpacity 
-                onPress={onClose}
-                style={[styles.formButton, styles.cancelButton]}
-              >
-                <Text style={styles.buttonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                onPress={onSave}
-                style={[styles.formButton, styles.saveButton]}
-              >
-                <Text style={[styles.buttonText, styles.saveButtonText]}>Save</Text>
-              </TouchableOpacity>
-            </View>
+          {/* Buttons */}
+          <View style={styles.formButtons}>
+            <TouchableOpacity onPress={onClose} style={[styles.formButton, styles.cancelButton]}>
+              <Text style={styles.buttonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onSave} style={[styles.formButton, styles.saveButton]}>
+              <Text style={[styles.buttonText, styles.saveButtonText]}>Save</Text>
+            </TouchableOpacity>
           </View>
         </View>
-      </Modal>
-    );
-  }, []); // Empty dependency array since this component doesn't depend on any external values
+      </View>
+    </Modal>
+  );
+}, []);
 
-  // Add maintenance action handler
-  const handleMaintenanceAction = useCallback((actionType: MaintenanceAction['type']) => {
+// Open form for an action
+const handleMaintenanceAction = useCallback(
+  (actionType: MaintenanceAction['type']) => {
     if (!currentLocation || !selectedMotor) return;
-
-    setMaintenanceFormData({
-      type: actionType,
-      cost: '',
-      quantity: '',
-      notes: ''
-    });
+    setMaintenanceFormData({ type: actionType, cost: '', quantity: '', notes: '' });
     setMaintenanceFormVisible(true);
-  }, [currentLocation, selectedMotor]);
+  },
+  [currentLocation, selectedMotor]
+);
 
-  // Helper function to save maintenance record
-  const saveMaintenanceRecord = async (actionType: MaintenanceAction['type'], formData: any) => {
-    try {
-      if (!user?._id || !selectedMotor?._id) {
-        throw new Error('Missing user or motor data');
-      }
+const saveMaintenanceRecord = async (
+  actionType: MaintenanceAction['type'],
+  formData: typeof maintenanceFormData
+) => {
+  try {
+    if (!user?._id || !selectedMotor?._id) throw new Error('Missing user or motor data');
+    // const fuelTank = selectedMotor.motorcycleData.fuelTank;
+    const cost = parseFloat(formData.cost) || 0;
+    const quantity = formData.quantity ? parseFloat(formData.quantity) : undefined;
 
-      // Parse the cost as a number
-      const cost = parseFloat(formData.cost) || 0;
-      const quantity = formData.quantity ? parseFloat(formData.quantity) : undefined;
+    const newAction: MaintenanceAction = {
+      type: actionType,
+      timestamp: Date.now(),
+      location: currentLocation
+        ? { latitude: currentLocation.latitude, longitude: currentLocation.longitude, address: currentLocation.address }
+        : { latitude: 0, longitude: 0 },
+      details: { cost, quantity, notes: formData.notes }
+    };
 
-      // Create the maintenance action
-      const newAction: MaintenanceAction = {
+    const currentFuelLevel = selectedMotor.currentFuelLevel;
+    // Save to backend
+    const response = await fetch(`${LOCALHOST_IP}/api/maintenance-records`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: user._id,
+        motorId: selectedMotor._id,
         type: actionType,
-        timestamp: Date.now(),
-        location: currentLocation ? {
-          latitude: currentLocation.latitude,
-          longitude: currentLocation.longitude,
-          address: currentLocation.address
-        } : {
-          latitude: 0,
-          longitude: 0
-        },
-        details: {
-          cost: cost,
-          quantity: quantity,
-          notes: formData.notes
-        }
-      };
+        timestamp: newAction.timestamp,
+        location: newAction.location,
+        details: newAction.details
+      })
+    });
 
-      // Save maintenance record
-      const maintenanceResponse = await fetch(`${LOCALHOST_IP}/api/maintenance-records`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          userId: user._id,
-          motorId: selectedMotor._id,
-          type: actionType,
-          timestamp: newAction.timestamp,
-          location: newAction.location,
-          details: newAction.details
-        })
+    if (!response.ok) throw new Error('Failed to save maintenance record');
+    const savedRecord = await response.json();
+    console.log('✅ Maintenance record saved:', savedRecord);
+
+    // If it's a refuel, update the motor's fuel level
+    if (actionType === 'refuel' && quantity) {
+      
+      const newFuelLevel = ((quantity/7) * 100) + currentFuelLevel;
+      await updateFuelLevel(selectedMotor._id, newFuelLevel); // <-- Call your existing function
+      setFuelLevel(newFuelLevel);
+      setFuelLevelInput(newFuelLevel);
+    }
+    
+    setMaintenanceActions(prev => [...prev, newAction]);
+    setMaintenanceFormVisible(false);
+
+    Toast.show({
+      type: 'success',
+      text1: 'Maintenance Recorded',
+      text2: `${actionType.replace('_', ' ')} has been recorded successfully`,
+      position: 'top',
+      visibilityTime: 3000
+    });
+  } catch (error: any) {
+    console.error('Error in saveMaintenanceRecord:', error);
+    Alert.alert('Error', error.message || 'Failed to save maintenance record');
+  }
+};
+
+
+
+  // update fuel level on backend
+  const updateFuelLevel = async (motorId: string, newFuelLevel: number) => {
+    try {
+      // 🚀 Send PUT request to backend
+      const response = await fetch(`${LOCALHOST_IP}/api/user-motors/${motorId}/fuel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentFuelLevel: newFuelLevel }),
       });
 
-      if (!maintenanceResponse.ok) {
-        throw new Error('Failed to save maintenance record');
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to update fuel level: ${response.status} ${errorText}`);
       }
-
-      const savedRecord = await maintenanceResponse.json();
-      console.log('✅ Maintenance record saved:', savedRecord);
-
-      // Update local state
-      setMaintenanceActions(prev => [...prev, newAction]);
-
-      // Show success toast
-      Toast.show({
-        type: 'success',
-        text1: 'Maintenance Recorded',
-        text2: `${actionType.replace('_', ' ')} has been recorded successfully`,
-        position: 'top',
-        visibilityTime: 3000,
-      });
-
-      // Close the form modal
-      setMaintenanceFormVisible(false);
-
-    } catch (error) {
-      console.error('Error in saveMaintenanceRecord:', error);
-      Alert.alert('Error', error.message || 'Failed to save maintenance record');
+      console.log(motorId);
+      const updatedMotor = await response.json();
+      console.log("✅ Fuel level updated:", updatedMotor);
+    } catch (error: any) {
+      console.error("❌ Error in updateFuelLevel:", error);
     }
   };
 
-  // Update the maintenance action item in the trip summary to be clickable
+
+  // Update the maintenance action item in the tto be clickable
   const renderMaintenanceAction = (action: MaintenanceAction, index: number) => (
     <TouchableOpacity
       key={index}
@@ -704,18 +789,18 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
         );
       }}
     >
-      <MaterialIcons 
+      <MaterialIcons
         name={
           action.type === 'refuel' ? 'local-gas-station' :
-          action.type === 'oil_change' ? 'opacity' :
-          'build'
-        } 
-        size={24} 
+            action.type === 'oil_change' ? 'opacity' :
+              'build'
+        }
+        size={24}
         color={
           action.type === 'refuel' ? '#2ecc71' :
-          action.type === 'oil_change' ? '#3498db' :
-          '#e67e22'
-        } 
+            action.type === 'oil_change' ? '#3498db' :
+              '#e67e22'
+        }
       />
       <View style={styles.maintenanceActionDetails}>
         <Text style={styles.maintenanceActionType}>
@@ -817,7 +902,7 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
       }
 
       const data = await response.json();
-      
+
       // Transform the data to match TrafficIncident type
       const formattedIncidents: TrafficIncident[] = data.map((report: any) => ({
         id: report._id || String(Math.random()),
@@ -839,6 +924,7 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
     }
   }, [currentLocation]);
 
+
   // Add predictive analytics after selectedMotor state is declared
   const analyticsData = usePredictiveAnalytics({
     fuelType: selectedMotor?.fuelType || 'Regular',
@@ -856,6 +942,7 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   useEffect(() => {
     if (!isNavigating || !selectedMotor || !analyticsData) return;
 
+
     // Check conditions every minute during navigation
     const monitoringInterval = setInterval(() => {
       // Low fuel warning during navigation
@@ -865,7 +952,7 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
           text1: 'Low Fuel Warning',
           text2: 'Consider refueling soon. Finding nearby gas stations...',
           position: 'top',
-          visibilityTime: 4000,
+          visibilityTime: 7000,
         });
         fetchTrafficReports(); // This will also update gas stations if implemented
       }
@@ -914,16 +1001,20 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
     setShowBottomSheet(false);
   }, []);
 
-  // Track user's path while navigating
-  useEffect(() => {
-    if (!isNavigating || !currentLocation) return;
 
-    // Initialize path with current location if empty
-    if (pathCoords.length === 0) {
-      setPathCoords([currentLocation]);
-    }
+  useEffect(() => {
+    if (!isNavigating) return;
+
+    // Keep latest props in refs so effect doesn't restart unnecessarily
+    const routeRef = { current: selectedRoute };
+    const motorRef = { current: selectedMotor };
+    const startTimeRef = { current: navigationStartTime };
 
     let subscription: Location.LocationSubscription;
+    let timer: NodeJS.Timer;
+
+    // Throttle speed warning
+    const lastWarningTime = { current: 0 };
 
     const startTracking = async () => {
       try {
@@ -931,7 +1022,7 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
           {
             accuracy: Location.Accuracy.High,
             distanceInterval: 10, // Update every 10 meters
-            timeInterval: 5000    // Or every 5 seconds
+            timeInterval: 5000,   // Or every 5 seconds
           },
           (location) => {
             const newPoint = {
@@ -940,57 +1031,83 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
             };
 
             setPathCoords((prev) => {
-              // Don't add duplicate points
+              // Avoid duplicates
               const lastPoint = prev[prev.length - 1];
-              if (lastPoint && 
-                  lastPoint.latitude === newPoint.latitude && 
-                  lastPoint.longitude === newPoint.longitude) {
+              if (
+                lastPoint &&
+                lastPoint.latitude === newPoint.latitude &&
+                lastPoint.longitude === newPoint.longitude
+              ) {
                 return prev;
               }
-              return [...prev, newPoint];
+
+              const updatedPath = [...prev, newPoint];
+
+              // Calculate total distance
+              const distanceTraveled = calculateTotalPathDistance(updatedPath);
+
+              // Update speed
+              const speedKmh = location.coords.speed
+                ? location.coords.speed * 3.6
+                : 0;
+              setCurrentSpeed(speedKmh);
+              setIsOverSpeedLimit(speedKmh > 80);
+
+              // Throttled overspeed warning
+              if (speedKmh > 80 && Date.now() - lastWarningTime.current > 10000) {
+                lastWarningTime.current = Date.now();
+                Toast.show({
+                  type: "error",
+                  text1: "Speed Warning",
+                  text2: "You are exceeding the speed limit!",
+                  position: "top",
+                  visibilityTime: 5000,
+                });
+              }
+
+              // ETA + fuel only if route exists
+              if (routeRef.current) {
+                const lastRoutePoint =
+                  routeRef.current.coordinates[
+                  routeRef.current.coordinates.length - 1
+                  ];
+                const remainingDist = calcDistance(newPoint, lastRoutePoint);
+                setDistanceRemaining(remainingDist);
+
+                // ETA
+                const avgSpeed = Math.max(speedKmh, 30); // safer fallback than 60
+                const remainingTimeHours = (remainingDist / 1000) / avgSpeed;
+                const remainingTimeMs = remainingTimeHours * 3600000;
+
+                const estimatedArrival = new Date(Date.now() + remainingTimeMs);
+                const formattedETA = estimatedArrival.toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: true,
+                });
+                setCurrentEta(formattedETA);
+
+                // Fuel
+                if (motorRef.current) {
+                  const y = distanceTraveled - (x ?? 0);
+                  setXValue(distanceTraveled);
+
+                  const { totalDrivableDistanceWithCurrentGas, totalDrivableDistance, _id } =
+                    motorRef.current;
+
+                  const newFuelLevel = totalDrivableDistance
+                    ? ((totalDrivableDistanceWithCurrentGas - y) /
+                      totalDrivableDistance) *
+                    100
+                    : 0;
+
+                  setFuelLevel(newFuelLevel);
+                  updateFuelLevel(_id, newFuelLevel);
+                }
+              }
+
+              return updatedPath;
             });
-
-            // Update speed and check for overspeeding
-            const speedKmh = location.coords.speed ? location.coords.speed * 3.6 : 0;
-            setCurrentSpeed(speedKmh);
-            setIsOverSpeedLimit(speedKmh > 80);
-
-            if (speedKmh > 80) {
-              Toast.show({
-                type: 'error',
-                text1: 'Speed Warning',
-                text2: 'You are exceeding the speed limit!',
-                position: 'top',
-                visibilityTime: 3000,
-              });
-            }
-
-            // Update distance remaining and ETA
-            if (selectedRoute) {
-              const lastRoutePoint = selectedRoute.coordinates[selectedRoute.coordinates.length - 1];
-              const remainingDist = calcDistance(newPoint, lastRoutePoint);
-              setDistanceRemaining(remainingDist);
-
-              // Calculate ETA based on current speed and remaining distance
-              // Use average speed if current speed is too low
-              const avgSpeed = Math.max(speedKmh, 20); // Assume minimum average speed of 20 km/h
-              const remainingTimeHours = (remainingDist / 1000) / avgSpeed; // Convert distance to km
-              const remainingTimeMs = remainingTimeHours * 3600000; // Convert hours to milliseconds
-              
-              const estimatedArrival = new Date(Date.now() + remainingTimeMs);
-              const formattedETA = estimatedArrival.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
-              });
-              
-              setCurrentEta(formattedETA);
-
-              // Update fuel used based on distance traveled
-              const distanceTraveled = calculateTotalPathDistance(pathCoords);
-              const fuelUsed = distanceTraveled / (selectedMotor?.fuelEfficiency || 20);
-              setCurrentFuelUsed(fuelUsed);
-            }
           }
         );
       } catch (error) {
@@ -1000,22 +1117,25 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
 
     startTracking();
 
-    // Update time elapsed every second
-    const timer = setInterval(() => {
-      if (navigationStartTime) {
-        setTimeElapsed(Math.floor((Date.now() - navigationStartTime) / 1000));
+    // Timer for elapsed time
+    timer = setInterval(() => {
+      if (startTimeRef.current) {
+        setTimeElapsed(
+          Math.floor((Date.now() - startTimeRef.current) / 1000)
+        );
       }
     }, 1000);
 
     return () => {
-      if (subscription) {
-        subscription.remove();
-      }
+      if (subscription) subscription.remove();
       clearInterval(timer);
     };
-  }, [isNavigating, currentLocation, selectedRoute, navigationStartTime, selectedMotor]);
+  }, [isNavigating]); // 👈 only depends on navigating state
 
-  // Start navigation function update
+
+
+
+
   const startNavigation = useCallback(async () => {
     if (!selectedRoute || !currentLocation || !selectedMotor) {
       Alert.alert("Error", "Please select a route and motor first");
@@ -1026,25 +1146,29 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
     setPathCoords([currentLocation]);
 
     // Pre-navigation analytics checks
-    if (analyticsData.lowFuel) {
+    if (analyticsData) {
       Alert.alert(
-        "Low Fuel Warning",
-        "Your fuel level is low. Would you like to find nearby gas stations before starting navigation?",
+        analyticsData.lowFuel ? "Low Fuel Warning" : "Check Fuel Level ",
+        analyticsData.lowFuel ? "Your fuel level is low. Do you still want to start?" : "Is Fuel Level Accurate?",
         [
           {
-            text: "Find Gas Stations",
+            text: "Update Fuel Level",
             onPress: () => {
-              fetchTrafficReports();
-            }
+              setShowFuelModal(true);
+            },
           },
           {
-            text: "Continue Anyway",
+            text: analyticsData.lowFuel ? "No" : "Cancel",
+            style: "cancel",
+          },
+          {
+            text: "Yes, Start",
             onPress: () => {
               setIsNavigating(true);
               setNavigationStartTime(Date.now());
               setIsFollowingUser(true);
-            }
-          }
+            },
+          },
         ]
       );
     } else {
@@ -1054,7 +1178,10 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
     }
 
     // Get the start address
-    const address = await reverseGeocodeLocation(currentLocation.latitude, currentLocation.longitude);
+    const address = await reverseGeocodeLocation(
+      currentLocation.latitude,
+      currentLocation.longitude
+    );
     setStartAddress(address);
 
     animateToRegion({
@@ -1062,11 +1189,73 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
       latitudeDelta: 0.005,
       longitudeDelta: 0.005,
     });
-  }, [selectedRoute, currentLocation, selectedMotor, analyticsData, fetchTrafficReports]);
+  }, [selectedRoute, currentLocation, selectedMotor, analyticsData]);
+
+  // Place this JSX anywhere in your component's return()
+
+
+
+  // // Start navigation function update
+  // const startNavigation = useCallback(async () => {
+  //   if (!selectedRoute || !currentLocation || !selectedMotor) {
+  //     Alert.alert("Error", "Please select a route and motor first");
+  //     return;
+  //   }
+
+  //   // Initialize path with starting point
+  //   setPathCoords([currentLocation]);
+
+  //   // Pre-navigation analytics checks
+  //   if (analyticsData.lowFuel) {
+  //     Alert.alert(
+  //       "Low Fuel Warning",
+  //       "Your fuel level is low. Do you still want to start??",
+  //       [
+  //         {
+  //           text: "Fuel Level Inaccurate",
+  //           onPress: () => {
+  //             // fetchTrafficReports();
+  //             //Do you want to Continue anyway despite of Low Fuel?
+  //           }
+  //         },
+  //         {
+  //           text: "No",
+  //           onPress: () => {
+  //             // fetchTrafficReports();
+  //             //Do you want to Continue anyway despite of Low Fuel?
+  //           }
+  //         },
+
+  //         {
+  //           text: "Yes",
+  //           onPress: () => {
+  //             setIsNavigating(true);
+  //             setNavigationStartTime(Date.now());
+  //             setIsFollowingUser(true);
+  //           }
+  //         }
+  //       ]
+  //     );
+  //   } else {
+  //     setIsNavigating(true);
+  //     setNavigationStartTime(Date.now());
+  //     setIsFollowingUser(true);
+  //   }
+
+  //   // Get the start address
+  //   const address = await reverseGeocodeLocation(currentLocation.latitude, currentLocation.longitude);
+  //   setStartAddress(address);
+
+  //   animateToRegion({
+  //     ...currentLocation,
+  //     latitudeDelta: 0.005,
+  //     longitudeDelta: 0.005,
+  //   });
+  // }, [selectedRoute, currentLocation, selectedMotor, analyticsData, fetchTrafficReports]);
 
   // Voice navigation state
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  console.log(user._id);
+  // console.log("user id: "+ user._id);
   // 📍 Load user-linked motors on mount
 
 
@@ -1131,14 +1320,14 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   useEffect(() => {
     if (!isNavigating || !selectedRoute || !currentLocation) return;
 
-    const userIsOffRoute = isUserOffRoute(currentLocation, selectedRoute.coordinates, 20);
+    const userIsOffRoute = isUserOffRoute(currentLocation, selectedRoute.coordinates, 50);
     if (userIsOffRoute) {
       //Alert.alert("Rerouting", "You have deviated from the route. Fetching a new route...");
       setWasRerouted(true);
       console.warn("🚨 Off-route detected. Rerouting...");
       setCurrentInstructionIndex(0);
       fetchRoutes();
-      
+
       setShowBottomSheet(false);
     }
   }, [currentLocation, isNavigating, selectedRoute]);
@@ -1163,329 +1352,355 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   }, []);
 
   // 🛣️ Fetch route and alternatives from Google Directions API
-const buildDirectionsUrl = ({
-  origin,
-  destination,
-  alternatives = true,
-  departureTime = "now",
-  trafficModel = "best_guess",
-  apiKey = GOOGLE_MAPS_API_KEY,
-}) => {
-  const baseUrl = "https://maps.googleapis.com/maps/api/directions/json";
-  const params = new URLSearchParams({
-    origin: `${origin.latitude},${origin.longitude}`,
-    destination: `${destination.latitude},${destination.longitude}`,
-    alternatives: "true",
-    mode: "driving",
-    departure_time: departureTime,
-    traffic_model: trafficModel,
-    key: apiKey,
-  });
-  return `${baseUrl}?${params.toString()}`;
-};
+  const buildDirectionsUrl = ({
+    origin,
+    destination,
+    alternatives = "true",
+    departureTime = "now",
+    trafficModel = "best_guess",
+    avoid = "tolls",
+    apiKey = GOOGLE_MAPS_API_KEY,
 
-const fetchRoutes = useCallback(async () => {
-  if (!currentLocation || !destination || !selectedMotor) {
-    console.log("Missing required data:", { 
-      hasCurrentLocation: !!currentLocation, 
-      hasDestination: !!destination, 
-      hasSelectedMotor: !!selectedMotor 
+  }) => {
+    const baseUrl = "https://maps.googleapis.com/maps/api/directions/json";
+    const params = new URLSearchParams({
+      origin: `${origin.latitude},${origin.longitude}`,
+      destination: `${destination.latitude},${destination.longitude}`,
+      alternatives: "true",
+      mode: "driving",
+      departure_time: departureTime,
+      traffic_model: trafficModel,
+      avoid: avoid,
+      key: apiKey,
     });
-    return;
-  }
-
-  setIsLoading(true);
-  console.log("🛰️ Fetching routes...");
-
-  try {
-    const url = buildDirectionsUrl({
-      origin: currentLocation,
-      destination: destination,
-    });
-
-    const res = await fetch(url);
-    const data = await res.json();
-
-    if (data.status !== "OK") {
-      throw new Error(data.error_message || "Failed to fetch routes");
-    }
-
-    const allRoutes = data.routes.map((r: any, i: number): RouteData => {
-      const leg = r.legs[0];
-      const fuel = selectedMotor ? leg.distance.value / 1000 / selectedMotor.fuelEfficiency : 0;
-
-      return {
-        id: `route-${i}`,
-        distance: leg.distance.value,
-        duration: leg.duration.value,
-        fuelEstimate: fuel,
-        trafficRate: Math.floor(Math.random() * 5) + 1,
-        coordinates: polyline.decode(r.overview_polyline.points).map(([lat, lng]) => ({
-          latitude: lat,
-          longitude: lng,
-        })),
-        instructions: leg.steps.map((step: any) =>
-          step.html_instructions.replace(/<[^>]*>/g, "")
-        ),
-      };
-    });
-
-    if (allRoutes.length === 0) {
-      throw new Error("No routes found");
-    }
-
-    const mainRoute = allRoutes[0];
-    const alternatives = allRoutes.slice(1);
-
-    setTripSummary(mainRoute);
-    setAlternativeRoutes(alternatives);
-    
-    // Always select the main route when fetching new routes
-    setSelectedRouteId(mainRoute.id);
-    setSelectedRoute(mainRoute);
-    
-    setShowBottomSheet(true);
-    await fetchTrafficReports();
-
-  } catch (error: any) {
-    console.error("❌ Route Fetch Error:", error.message);
-    Alert.alert("Error", "Failed to fetch routes. Please try again.");
-    
-    setShowBottomSheet(false);
-    setTripSummary(null);
-    setAlternativeRoutes([]);
-    setSelectedRouteId(null);
-    setSelectedRoute(null);
-  } finally {
-    setIsLoading(false);
-  }
-}, [currentLocation, destination, selectedMotor, fetchTrafficReports]);
-
-
-const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
-const [durationInMinutes, setDurationInMinutes] = useState(0);
-
-const endNavigation = useCallback(async (arrived: boolean = false) => {
-  // First, stop the navigation
-  setIsNavigating(false);
-  setIsFollowingUser(false);
-  setNavigationStartTime(null);
-
-  // Check for required data
-  if (!user) {
-    console.warn("⚠️ Cannot save trip summary: No user data");
-    return;
-  }
-
-  if (!destination) {
-    console.warn("⚠️ Cannot save trip summary: No destination data");
-    return;
-  }
-
-  if (!selectedRoute) {
-    console.warn("⚠️ Cannot save trip summary: No route data");
-    return;
-  }
-
-  if (!selectedMotor) {
-    console.warn("⚠️ Cannot save trip summary: No motor data");
-    return;
-  }
-
-  // For same location trips, ensure we have at least 2 points
-  let finalPathCoords = pathCoords;
-  if (pathCoords.length < 2 && currentLocation) {
-    // If start and end are the same, create a small circular path
-    const radius = 0.0001; // Small radius around the point
-    finalPathCoords = [
-      currentLocation,
-      {
-        latitude: currentLocation.latitude + radius,
-        longitude: currentLocation.longitude + radius
-      },
-      {
-        latitude: currentLocation.latitude - radius,
-        longitude: currentLocation.longitude - radius
-      },
-      currentLocation
-    ];
-  }
-
-  // Calculate trip metrics
-  const durationInMinutes = navigationStartTime 
-    ? Math.round((Date.now() - navigationStartTime) / 60000) 
-    : 1; // Minimum 1 minute for same-location trips
-
-  const actualDistance = calculateTotalPathDistance(finalPathCoords);
-
-  const estimatedFuel = calculateFuelRange(
-    selectedRoute.distance / 1000,
-    selectedMotor.fuelEfficiency
-  );
-
-  const actualFuel = calculateFuelRange(
-    actualDistance,
-    selectedMotor.fuelEfficiency
-  );
-
-  // Prepare trip summary
-  const summary: TripSummary = {
-    userId: user._id,
-    motorId: selectedMotor._id,
-    distance: Number((selectedRoute.distance / 1000).toFixed(2)),
-    fuelUsed: Number(selectedRoute.fuelEstimate.toFixed(2)),
-    eta: new Date(Date.now() + selectedRoute.duration * 1000).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    }),
-    timeArrived: new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    }),
-    destination: destination.address || "Unknown",
-    startAddress: startAddress || "Unknown"
+    return `${baseUrl}?${params.toString()}`;
   };
 
-  try {
-    // Save the trip summary with the modified path data
-    await saveTripSummaryToBackend(summary, arrived, {
-      startAddress,
-      estimatedFuel,
-      actualFuel,
-      actualDistance,
-      pathCoords: finalPathCoords,
-      plannedCoords: selectedRoute.coordinates,
-      wasRerouted,
-      durationInMinutes,
-    });
-
-    console.log("✅ Trip summary saved successfully");
-    
-    // Show the trip summary modal
-    setTripSummaryModalVisible(true);
-  } catch (error) {
-    console.error("🔥 Failed to save trip summary:", error);
-    Alert.alert(
-      "Error",
-      "Failed to save trip summary. Your trip data might not be recorded.",
-      [{ text: "OK" }]
-    );
-  }
-}, [
-  user,
-  destination,
-  selectedRoute,
-  selectedMotor,
-  pathCoords,
-  navigationStartTime,
-  wasRerouted,
-  startAddress,
-  currentLocation
-]);
-
-
-
-
-
-
-
-const actualDistance = selectedRoute ? calculateTotalPathDistance(pathCoords) : 0;
-const estimatedFuel = selectedRoute && selectedMotor
-  ? calculateFuelRange(selectedRoute.distance / 1000, selectedMotor.fuelEfficiency)
-  : { min: 0, max: 0, avg: 0 };
-const actualFuel = selectedMotor
-  ? calculateFuelRange(actualDistance, selectedMotor.fuelEfficiency)
-  : { min: 0, max: 0, avg: 0 };
-
-
-
-// 💾 Save trip summary to backend
-const saveTripSummaryToBackend = async (
-  summary: TripSummary,
-  arrived: boolean,
-  extras: {
-    startAddress?: string;
-    estimatedFuel: { min: number; max: number; avg: number };
-    actualFuel: { min: number; max: number; avg: number };
-    actualDistance: number;
-    pathCoords: LocationCoords[];
-    plannedCoords: LocationCoords[];
-    wasRerouted: boolean;
-    durationInMinutes: number;
-  }
-) => {
-  try {
-    if (!user?._id || !selectedMotor?._id) {
-      throw new Error('Missing user or motor data');
+  const fetchRoutes = useCallback(async () => {
+    if (!currentLocation || !destination || !selectedMotor) {
+      console.log("Missing required data:", {
+        hasCurrentLocation: !!currentLocation,
+        hasDestination: !!destination,
+        hasSelectedMotor: !!selectedMotor
+      });
+      return;
     }
 
-    // Save the trip summary
-    const tripData = {
+    setIsLoading(true);
+    console.log("🛰️ Fetching routes...");
+
+    try {
+      const url = buildDirectionsUrl({
+        origin: currentLocation,
+        destination: destination,
+      });
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data.status !== "OK") {
+        throw new Error(data.error_message || "Failed to fetch routes");
+      }
+
+      const allRoutes = data.routes.map((r: any, i: number): RouteData => {
+        const leg = r.legs[0];
+        console.log("leg ", leg.distance.value);
+        // self-made (logical) formula by the coder itself :PP 
+        const fuel = selectedMotor ? (leg.distance.value / 1000 / selectedMotor.fuelEfficiency) : 0;
+
+        // helper — pure function
+        const getTrafficRateFromLeg = (leg: any): number => {
+          if (!leg || !leg.duration || !leg.duration_in_traffic) return 1; // fallback
+
+          const dur = leg.duration.value; // seconds
+          const durTraffic = leg.duration_in_traffic.value; // seconds
+
+          if (!dur || dur <= 0) return 1;
+
+          const ratio = durTraffic / dur;
+          console.log("ratio: ", ratio);
+          // non-overlapping thresholds (else-if)
+          if (ratio <= 1.2) return 1;
+          else if (ratio <= 1.5) return 2;
+          else if (ratio <= 2.0) return 3;
+          else if (ratio <= 2.5) return 4;
+          else return 5;
+        };
+
+
+        const trafficRate = getTrafficRateFromLeg(leg);
+        return {
+          id: `route-${i}`,
+          distance: leg.distance.value,
+          duration: leg.duration.value,
+          fuelEstimate: fuel,
+          trafficRate,
+          coordinates: polyline.decode(r.overview_polyline.points).map(([lat, lng]) => ({
+            latitude: lat,
+            longitude: lng,
+          })),
+          instructions: leg.steps.map((step: any) =>
+            step.html_instructions.replace(/<[^>]*>/g, "")
+          ),
+        };
+      });
+
+      if (allRoutes.length === 0) {
+        throw new Error("No routes found");
+      }
+
+      const mainRoute = allRoutes[0];
+      const alternatives = allRoutes.slice(1);
+
+      setTripSummary(mainRoute);
+      setAlternativeRoutes(alternatives);
+
+      // Always select the main route when fetching new routes
+      setSelectedRouteId(mainRoute.id);
+      setSelectedRoute(mainRoute);
+
+      setShowBottomSheet(true);
+      await fetchTrafficReports();
+
+    } catch (error: any) {
+      console.error("❌ Route Fetch Error:", error.message);
+      Alert.alert("Error", "Failed to fetch routes. Please try again.");
+
+      setShowBottomSheet(false);
+      setTripSummary(null);
+      setAlternativeRoutes([]);
+      setSelectedRouteId(null);
+      setSelectedRoute(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentLocation, destination, selectedMotor, fetchTrafficReports]);
+
+
+  const [currentInstructionIndex, setCurrentInstructionIndex] = useState(0);
+  const [durationInMinutes, setDurationInMinutes] = useState(0);
+
+  const endNavigation = useCallback(async (arrived: boolean = false) => {
+    // First, stop the navigation
+    setIsNavigating(false);
+    setIsFollowingUser(false);
+    setNavigationStartTime(null);
+
+    // Check for required data
+    if (!user) {
+      console.warn("⚠️ Cannot save trip summary: No user data");
+      return;
+    }
+
+    if (!destination) {
+      console.warn("⚠️ Cannot save trip summary: No destination data");
+      return;
+    }
+
+    if (!selectedRoute) {
+      console.warn("⚠️ Cannot save trip summary: No route data");
+      return;
+    }
+
+    if (!selectedMotor) {
+      console.warn("⚠️ Cannot save trip summary: No motor data");
+      return;
+    }
+
+    // For same location trips, ensure we have at least 2 points
+    let finalPathCoords = pathCoords;
+    if (pathCoords.length < 2 && currentLocation) {
+      // If start and end are the same, create a small circular path
+      const radius = 0.0001; // Small radius around the point
+      finalPathCoords = [
+        currentLocation,
+        {
+          latitude: currentLocation.latitude + radius,
+          longitude: currentLocation.longitude + radius
+        },
+        {
+          latitude: currentLocation.latitude - radius,
+          longitude: currentLocation.longitude - radius
+        },
+        currentLocation
+      ];
+    }
+
+    // Calculate trip metrics
+    const durationInMinutes = navigationStartTime
+      ? Math.round((Date.now() - navigationStartTime) / 60000)
+      : 1; // Minimum 1 minute for same-location trips
+
+    const actualDistance = calculateTotalPathDistance(finalPathCoords);
+    console.log("ACTUAL DISTANCE ", actualDistance);
+    const estimatedFuel = calculateFuelRange(
+      selectedRoute.distance / 1000,
+      selectedMotor.fuelEfficiency
+    );
+
+    const actualFuel = calculateFuelRange(
+      actualDistance,
+      selectedMotor.fuelEfficiency
+    );
+
+    // Prepare trip summary
+    const summary: TripSummary = {
       userId: user._id,
       motorId: selectedMotor._id,
-      startAddress: extras.startAddress || 'Unknown',
-      destination: summary.destination,
-      distance: summary.distance,
-      duration: extras.durationInMinutes,
-      fuelUsed: summary.fuelUsed,
-      fuelUsedMin: extras.estimatedFuel.min,
-      fuelUsedMax: extras.estimatedFuel.max,
-      actualFuelUsedMin: extras.actualFuel.min,
-      actualFuelUsedMax: extras.actualFuel.max,
-      actualDistance: extras.actualDistance,
-      wasRerouted: extras.wasRerouted,
-      isSuccessful: arrived,
-      status: arrived ? "completed" : "cancelled",
-      timeArrived: summary.timeArrived,
-      eta: summary.eta,
-      trafficCondition: "moderate",
-      kmph: 0,
-      rerouteCount: 0,
-      wasInBackground: false,
-      showAnalyticsModal: false
+      distance: Number((selectedRoute.distance / 1000).toFixed(2)),
+      fuelUsed: Number(selectedRoute.fuelEstimate.toFixed(2)),
+      eta: new Date(Date.now() + selectedRoute.duration * 1000).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }),
+      timeArrived: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }),
+      destination: destination.address || "Unknown",
+      startAddress: startAddress || "Unknown"
     };
 
-    console.log('Saving trip data:', tripData);
+    try {
+      // Save the trip summary with the modified path data
+      await saveTripSummaryToBackend(summary, arrived, {
+        startAddress,
+        estimatedFuel,
+        actualFuel,
+        actualDistance,
+        pathCoords: finalPathCoords,
+        plannedCoords: selectedRoute.coordinates,
+        wasRerouted,
+        durationInMinutes,
+      });
 
-    const tripResponse = await fetch(`${LOCALHOST_IP}/api/trips`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(tripData)
-    });
+      console.log("✅ Trip summary saved successfully");
 
-    if (!tripResponse.ok) {
-      throw new Error('Failed to save trip summary');
+      // Show the trip summary modal
+      setTripSummaryModalVisible(true);
+    } catch (error) {
+      console.error("🔥 Failed to save trip summary:", error);
+      Alert.alert(
+        "Error",
+        "Failed to save trip summary. Your trip data might not be recorded.",
+        [{ text: "OK" }]
+      );
     }
+  }, [
+    user,
+    destination,
+    selectedRoute,
+    selectedMotor,
+    pathCoords,
+    navigationStartTime,
+    wasRerouted,
+    startAddress,
+    currentLocation
+  ]);
 
-    const savedTrip = await tripResponse.json();
-    console.log('✅ Trip saved successfully:', savedTrip);
 
-    // Show success toast
-    Toast.show({
-      type: 'success',
-      text1: 'Trip Saved',
-      text2: 'Your trip has been recorded successfully',
-      position: 'top',
-      visibilityTime: 3000,
-    });
 
-    // Set trip summary modal visible
-    setTripSummaryModalVisible(true);
 
-  } catch (error) {
-    console.error('🔥 Error saving trip data:', error);
-    Alert.alert(
-      "Error",
-      "Failed to save trip data. Please try again.",
-      [{ text: "OK" }]
-    );
-    throw error;
-  }
-};
+
+
+
+  const actualDistance = selectedRoute ? calculateTotalPathDistance(pathCoords) : 0;
+  const estimatedFuel = selectedRoute && selectedMotor
+    ? calculateFuelRange(selectedRoute.distance / 1000, selectedMotor.fuelEfficiency)
+    : { min: 0, max: 0, avg: 0 };
+  const actualFuel = selectedMotor
+    ? calculateFuelRange(actualDistance, selectedMotor.fuelEfficiency)
+    : { min: 0, max: 0, avg: 0 };
+
+
+
+  // 💾 Save trip summary to backend
+  const saveTripSummaryToBackend = async (
+    summary: TripSummary,
+    arrived: boolean,
+    extras: {
+      startAddress?: string;
+      estimatedFuel: { min: number; max: number; avg: number };
+      actualFuel: { min: number; max: number; avg: number };
+      actualDistance: number;
+      pathCoords: LocationCoords[];
+      plannedCoords: LocationCoords[];
+      wasRerouted: boolean;
+      durationInMinutes: number;
+    }
+  ) => {
+    try {
+      if (!user?._id || !selectedMotor?._id) {
+        throw new Error('Missing user or motor data');
+      }
+
+      // Save the trip summary
+      const tripData = {
+        userId: user._id,
+        motorId: selectedMotor._id,
+        startAddress: extras.startAddress || 'Unknown',
+        destination: summary.destination,
+        distance: summary.distance,
+        duration: extras.durationInMinutes,
+        fuelUsed: summary.fuelUsed,
+        fuelUsedMin: extras.estimatedFuel.min,
+        fuelUsedMax: extras.estimatedFuel.max,
+        actualFuelUsedMin: extras.actualFuel.min,
+        actualFuelUsedMax: extras.actualFuel.max,
+        actualDistance: extras.actualDistance,
+        wasRerouted: extras.wasRerouted,
+        isSuccessful: arrived,
+        status: arrived ? "completed" : "cancelled",
+        timeArrived: summary.timeArrived,
+        eta: summary.eta,
+        trafficCondition: "moderate",
+        kmph: 0,
+        rerouteCount: 0,
+        wasInBackground: false,
+        showAnalyticsModal: false
+      };
+
+      console.log('Saving trip data:', tripData);
+
+      const tripResponse = await fetch(`${LOCALHOST_IP}/api/trips`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(tripData)
+      });
+
+      if (!tripResponse.ok) {
+        throw new Error('Failed to save trip summary');
+      }
+
+      const savedTrip = await tripResponse.json();
+      console.log('✅ Trip saved successfully:', savedTrip);
+
+      // Show success toast
+      Toast.show({
+        type: 'success',
+        text1: 'Trip Saved',
+        text2: 'Your trip has been recorded successfully',
+        position: 'top',
+        visibilityTime: 3000,
+      });
+
+      // Set trip summary modal visible
+      setTripSummaryModalVisible(true);
+
+    } catch (error) {
+      console.error('🔥 Error saving trip data:', error);
+      Alert.alert(
+        "Error",
+        "Failed to save trip data. Please try again.",
+        [{ text: "OK" }]
+      );
+      throw error;
+    }
+  };
 
   // 🌐 Loading States
   if (!user || isLoading) {
@@ -1510,7 +1725,7 @@ const saveTripSummaryToBackend = async (
     <SafeAreaProvider>
       <SafeAreaView style={[styles.safeArea]}>
         {/* Header */}
-        <LinearGradient
+        {/* <LinearGradient
           colors={['#00ADB5', '#3498db']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
@@ -1521,16 +1736,16 @@ const saveTripSummaryToBackend = async (
           </TouchableOpacity>
           <Text style={styles.headerText}>Traffic Slight</Text>
           
-        </LinearGradient>
+        </LinearGradient> */}
 
         {/* Destination Display */}
         {destination && (
           <View style={styles.destinationHeader}>
             <Pressable onPress={() => {
               // When pressing the destination, show the modal but don't clear the route
-              setModalVisible(true);
+              // setModalVisible(true);
             }}>
-              <Text style={styles.destinationText} numberOfLines={1}>
+              <Text style={styles.destinationText} numberOfLines={2}>
                 {destination.address}
               </Text>
             </Pressable>
@@ -1538,8 +1753,8 @@ const saveTripSummaryToBackend = async (
         )}
 
         {/* Search Modal */}
-        <Modal 
-          animationType="slide" 
+        <Modal
+          animationType="slide"
           visible={modalVisible}
           onRequestClose={() => {
             // If we have a destination and routes, just close the modal
@@ -1559,7 +1774,7 @@ const saveTripSummaryToBackend = async (
         >
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => {
                   // If we have a destination and routes, just close the modal
                   if (destination && (selectedRoute || selectedRouteId)) {
@@ -1574,7 +1789,7 @@ const saveTripSummaryToBackend = async (
                       navigation.navigate("MainTabs", { screen: "Map" });
                     }
                   }
-                }} 
+                }}
                 style={styles.modalBackButton}
               >
                 <MaterialIcons name="arrow-back" size={24} color="#333" />
@@ -1593,10 +1808,10 @@ const saveTripSummaryToBackend = async (
                   Alert.alert("Select Motor", "Please select a motor first");
                   return;
                 }
-                
+
                 setDestination(dest);
                 setModalVisible(false);
-                
+
                 // If we don't have current location, get it first
                 if (!currentLocation) {
                   (async () => {
@@ -1622,6 +1837,8 @@ const saveTripSummaryToBackend = async (
             />
           </View>
         </Modal>
+
+
 
         {/* Map View */}
         <View style={styles.mapContainer}>
@@ -1669,18 +1886,24 @@ const saveTripSummaryToBackend = async (
             {currentLocation && (
               <Marker coordinate={currentLocation} anchor={{ x: 0.5, y: 0.5 }}>
                 <View style={styles.userMarker}>
-                  <MaterialIcons name="person-pin-circle" size={32} color="#3498db" />
+                  {/* <MaterialIcons name="person-pin-circle" size={32} color="#3498db" /> */}
                 </View>
               </Marker>
             )}
 
             {destination && (
               <Marker coordinate={destination} anchor={{ x: 0.5, y: 0.5 }}>
-                <View style={styles.destinationMarker}>
-                  <MaterialIcons name="place" size={32} color="#e74c3c" />
+                <View style={[styles.destinationMarker, { backgroundColor: 'transparent' }]}>
+                  <Image
+                    source={require("../../assets/icons/DESTINATION MARKER.png")}
+                    style={{ width: 40, height: 40 }}
+                    resizeMode="contain"
+                  />
                 </View>
               </Marker>
+
             )}
+
 
 
           </MapView>
@@ -1692,7 +1915,14 @@ const saveTripSummaryToBackend = async (
           )}
 
           {/* Analytics Overlay */}
-          {!isNavigating && <AnalyticsOverlay analyticsData={analyticsData} selectedMotor={selectedMotor} />}
+          {!isNavigating && (
+            <AnalyticsOverlay
+              analyticsData={analyticsData}
+              selectedMotor={selectedMotor}
+              userId={user._id}
+            />
+          )}
+
 
           {/* Loading State */}
           {!selectedRoute && !isNavigating && destination && isLoading && (
@@ -1707,8 +1937,8 @@ const saveTripSummaryToBackend = async (
             <View style={styles.bottomButtonsContainer}>
               {(selectedRoute || (selectedRouteId && (tripSummary?.id === selectedRouteId || alternativeRoutes.find(r => r.id === selectedRouteId)))) && (
                 <>
-                  <TouchableOpacity 
-                    onPress={() => setShowBottomSheet(true)} 
+                  <TouchableOpacity
+                    onPress={() => setShowBottomSheet(true)}
                     style={styles.showRoutesButton}
                     disabled={isNavigating} // Disable during navigation
                   >
@@ -1721,11 +1951,11 @@ const saveTripSummaryToBackend = async (
                       <Text style={styles.showRoutesText}>Show Available Routes</Text>
                     </LinearGradient>
                   </TouchableOpacity>
-                  
+
                   <View style={styles.buttonSpacer} />
-                  
-                  <TouchableOpacity 
-                    onPress={startNavigation} 
+
+                  <TouchableOpacity
+                    onPress={startNavigation}
                     style={styles.navigationButton}
                     disabled={isNavigating} // Disable during navigation
                   >
@@ -1740,10 +1970,10 @@ const saveTripSummaryToBackend = async (
                   </TouchableOpacity>
                 </>
               )}
-              
+
               {!selectedRoute && destination && !isLoading && (
-                <TouchableOpacity 
-                  onPress={fetchRoutes} 
+                <TouchableOpacity
+                  onPress={fetchRoutes}
                   style={styles.showRoutesButton}
                   disabled={isNavigating} // Disable during navigation
                 >
@@ -1759,6 +1989,116 @@ const saveTripSummaryToBackend = async (
               )}
             </View>
           )}
+
+          <Modal visible={showFuelModal} transparent>
+            <View
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                alignItems: "center",
+                backgroundColor: "rgba(0,0,0,0.5)",
+              }}
+            >
+              <View
+                style={{
+                  width: "80%",
+                  padding: 20,
+                  backgroundColor: "white",
+                  borderRadius: 12,
+                }}
+              >
+                <Text style={{ fontSize: 18, fontWeight: "600", marginBottom: 10 }}>
+                  Update Fuel Level
+                </Text>
+
+                {/* Text Input */}
+                <TextInput
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#ccc",
+                    borderRadius: 8,
+                    padding: 10,
+                    marginBottom: 15,
+                    textAlign: "center",
+                    fontSize: 16,
+                  }}
+                  placeholder="Enter fuel level (%)"
+                  keyboardType="numeric"
+                  maxLength={3} // prevent very long numbers
+                  value={String(fuelLevelInput)}
+                  onChangeText={(text) => {
+                    const num = Math.min(Number(text) || 0, 100); // clamp to 0–100
+                    setFuelLevelInput(num);
+                  }}
+                />
+
+                {/* Quick Select Buttons */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    justifyContent: "space-between",
+                    marginBottom: 15,
+                  }}
+                >
+                  {[10, 25, 50, 75, 90, 100].map((percent) => (
+                    <TouchableOpacity
+                      key={percent}
+                      style={{
+                        width: "30%",
+                        padding: 10,
+                        backgroundColor: "#2196f3",
+                        borderRadius: 8,
+                        marginVertical: 5,
+                        alignItems: "center",
+                      }}
+                      onPress={() => setFuelLevelInput(percent)}
+                    >
+                      <Text style={{ color: "white", fontWeight: "600" }}>
+                        {percent}%
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Action Buttons */}
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      padding: 10,
+                      backgroundColor: "#aaa",
+                      borderRadius: 8,
+                      marginRight: 5,
+                      alignItems: "center",
+                    }}
+                    onPress={() => setShowFuelModal(false)}
+                  >
+                    <Text style={{ color: "white", fontWeight: "600" }}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      padding: 10,
+                      backgroundColor: "#4caf50",
+                      borderRadius: 8,
+                      marginLeft: 5,
+                      alignItems: "center",
+                    }}
+                    onPress={() => {
+                      updateFuelLevel(selectedMotor._id, fuelLevelInput);
+                      setFuelLevel(fuelLevelInput);
+                      setShowFuelModal(false)
+                    }
+                    }
+                  >
+                    <Text style={{ color: "white", fontWeight: "600" }}>Update</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
 
           {/* Navigation Controls */}
           {isNavigating && (
@@ -1781,13 +2121,17 @@ const saveTripSummaryToBackend = async (
             currentSpeed={currentSpeed}
             distanceRemaining={distanceRemaining}
             timeElapsed={timeElapsed}
+            currentFuel={fuelLevel}
             currentEta={currentEta}
             currentFuelUsed={currentFuelUsed}
             isOverSpeedLimit={isOverSpeedLimit}
             selectedRoute={selectedRoute}
             selectedMotor={selectedMotor}
+            distanceTraveled={calculateTotalPathDistance(pathCoords)}
           />
         </View>
+
+
 
 
         {/* Route Details */}
@@ -1804,10 +2148,11 @@ const saveTripSummaryToBackend = async (
 
 
 
+
         {/* Trip Summary Modal */}
-        <Modal 
-          transparent 
-          visible={tripSummaryModalVisible} 
+        <Modal
+          transparent
+          visible={tripSummaryModalVisible}
           animationType="fade"
           onRequestClose={() => setTripSummaryModalVisible(false)}
         >
@@ -1826,23 +2171,23 @@ const saveTripSummaryToBackend = async (
                 {/* Route Information */}
                 <View style={styles.summarySection}>
                   <Text style={styles.sectionTitle}>Route Information</Text>
-                  
-  <View style={styles.summaryRow}>
-    <MaterialIcons name="my-location" size={20} color="#34495e" />
-    <Text style={styles.summaryText}>From: {startAddress || "Unknown"}</Text>
-  </View>
 
-  <View style={styles.summaryRow}>
-    <MaterialIcons name="place" size={20} color="#e74c3c" />
+                  <View style={styles.summaryRow}>
+                    <MaterialIcons name="my-location" size={20} color="#34495e" />
+                    <Text style={styles.summaryText}>From: {startAddress || "Unknown"}</Text>
+                  </View>
+
+                  <View style={styles.summaryRow}>
+                    <MaterialIcons name="place" size={20} color="#e74c3c" />
                     <Text style={styles.summaryText}>To: {destination?.address || "Unknown"}</Text>
                   </View>
-  </View>
+                </View>
 
                 {/* Distance Analytics */}
                 <View style={styles.summarySection}>
                   <Text style={styles.sectionTitle}>Distance Analytics</Text>
-                  
-  <View style={styles.summaryRow}>
+
+                  <View style={styles.summaryRow}>
                     <MaterialIcons name="straighten" size={20} color="#3498db" />
                     <View style={styles.analyticsCompare}>
                       <Text style={styles.analyticsLabel}>Planned Distance:</Text>
@@ -1851,36 +2196,36 @@ const saveTripSummaryToBackend = async (
                       <Text style={styles.analyticsValue}>{calculateTotalPathDistance(pathCoords).toFixed(2)} km</Text>
                       <Text style={styles.analyticsDiff}>
                         {wasRerouted ? "Route was recalculated during trip" : "Stayed on planned route"}
-    </Text>
+                      </Text>
                     </View>
                   </View>
-  </View>
+                </View>
 
                 {/* Fuel Analytics */}
                 <View style={styles.summarySection}>
                   <Text style={styles.sectionTitle}>Fuel Analytics</Text>
-                  
-  <View style={styles.summaryRow}>
-    <MaterialIcons name="local-gas-station" size={20} color="#2ecc71" />
+
+                  <View style={styles.summaryRow}>
+                    <MaterialIcons name="local-gas-station" size={20} color="#2ecc71" />
                     <View style={styles.analyticsCompare}>
                       <Text style={styles.analyticsLabel}>Estimated Consumption:</Text>
                       <Text style={styles.analyticsValue}>{selectedRoute ? selectedRoute.fuelEstimate.toFixed(2) : "--"} L</Text>
                       <Text style={styles.analyticsLabel}>Actual Consumption:</Text>
                       <Text style={styles.analyticsValue}>
                         {selectedRoute ? (selectedRoute.fuelEstimate * (wasRerouted ? 1.1 : 1.0)).toFixed(2) : "--"} L
-    </Text>
+                      </Text>
                       <Text style={styles.analyticsLabel}>Efficiency:</Text>
                       <Text style={styles.analyticsValue}>{selectedMotor?.fuelEfficiency || "--"} km/L</Text>
                     </View>
                   </View>
-  </View>
+                </View>
 
                 {/* Time Analytics */}
                 <View style={styles.summarySection}>
                   <Text style={styles.sectionTitle}>Time Analytics</Text>
-                  
-  <View style={styles.summaryRow}>
-    <MaterialIcons name="schedule" size={20} color="#9b59b6" />
+
+                  <View style={styles.summaryRow}>
+                    <MaterialIcons name="schedule" size={20} color="#9b59b6" />
                     <View style={styles.analyticsCompare}>
                       <Text style={styles.analyticsLabel}>Start Time:</Text>
                       <Text style={styles.analyticsValue}>
@@ -1893,33 +2238,33 @@ const saveTripSummaryToBackend = async (
                       <Text style={styles.analyticsLabel}>End Time:</Text>
                       <Text style={styles.analyticsValue}>
                         {new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      })}
-    </Text>
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: true,
+                        })}
+                      </Text>
                       <Text style={styles.analyticsLabel}>Total Duration:</Text>
                       <Text style={styles.analyticsValue}>{durationInMinutes} minutes</Text>
-  </View>
+                    </View>
                   </View>
-  </View>
+                </View>
 
                 {/* Motor Information */}
                 <View style={styles.summarySection}>
                   <Text style={styles.sectionTitle}>Motor Information</Text>
-                  
-  <View style={styles.summaryRow}>
-    <MaterialIcons name="two-wheeler" size={20} color="#1abc9c" />
+
+                  <View style={styles.summaryRow}>
+                    <MaterialIcons name="two-wheeler" size={20} color="#1abc9c" />
                     <View style={styles.analyticsCompare}>
                       <Text style={styles.analyticsLabel}>Motor:</Text>
                       <Text style={styles.analyticsValue}>{selectedMotor?.name || "--"}</Text>
                       <Text style={styles.analyticsLabel}>Current Fuel Level:</Text>
-                      <Text style={styles.analyticsValue}>{selectedMotor?.currentFuelLevel || "--"}%</Text>
+                      <Text style={styles.analyticsValue}>{Math.round(selectedMotor?.currentFuelLevel) || "--"}%</Text>
                       <Text style={styles.analyticsLabel}>Total Distance Traveled:</Text>
                       <Text style={styles.analyticsValue}>{selectedMotor?.totalDistance || "--"} km</Text>
                     </View>
                   </View>
-  </View>
+                </View>
 
                 {/* Maintenance Actions */}
                 <View style={styles.summarySection}>
@@ -1932,23 +2277,23 @@ const saveTripSummaryToBackend = async (
                 </View>
               </ScrollView>
 
-  <TouchableOpacity
-    onPress={() => {
-      setTripSummaryModalVisible(false);
-      navigation.goBack();
-    }}
-    style={styles.closeSummaryButton}
+              <TouchableOpacity
+                onPress={() => {
+                  setTripSummaryModalVisible(false);
+                  navigation.goBack();
+                }}
+                style={styles.closeSummaryButton}
               >
                 <LinearGradient
                   colors={['#00ADB5', '#00858B']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.closeSummaryGradient}
-  >
-    <Text style={styles.closeSummaryText}>Done</Text>
+                >
+                  <Text style={styles.closeSummaryText}>Done</Text>
                 </LinearGradient>
-  </TouchableOpacity>
-</View>
+              </TouchableOpacity>
+            </View>
           </View>
         </Modal>
 
@@ -1988,10 +2333,10 @@ const saveTripSummaryToBackend = async (
         )}
 
       </SafeAreaView>
-      
+
       {/* Add Toast at the end of SafeAreaView */}
       <Toast />
-      
+
       {/* Add Maintenance Form Modal */}
       <MaintenanceFormModal
         visible={maintenanceFormVisible}
@@ -2018,6 +2363,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#00ADB5',
+    zIndex: -5
   },
   loadingContainer: {
     flex: 1,
@@ -2035,6 +2381,7 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     position: 'relative',
+    zIndex: -1
   },
   map: {
     ...StyleSheet.absoluteFillObject,
@@ -2045,7 +2392,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    paddingTop: Platform.OS === "android" ? 25 : 16,
+    paddingTop: 10,
   },
   backButton: {
     padding: 8,
@@ -2060,13 +2407,19 @@ const styles = StyleSheet.create({
 
   // Destination Styles
   destinationHeader: {
+    position: "absolute",
+    zIndex: 1,
     backgroundColor: '#fff',
-    padding: 16,
+    padding: 10,
+    // marginTop: 35,
+    bottom: "90%",
+    marginHorizontal: 10,
+    borderRadius: 50,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.05)',
   },
   destinationText: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#333',
     fontWeight: '500',
   },
@@ -2615,6 +2968,7 @@ const styles = StyleSheet.create({
   // Summary Modal Styles
   summaryModalContainer: {
     flex: 1,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2661,11 +3015,11 @@ const styles = StyleSheet.create({
   // Analytics styles
   analyticsOverlay: {
     position: 'absolute',
-    top: 20,
+    top: 120,
     right: 20,
     borderRadius: 12,
     overflow: 'hidden',
-    width: '80%',
+    width: '50%',
     maxWidth: 300,
   },
 
@@ -2791,6 +3145,7 @@ const styles = StyleSheet.create({
   // Trip Details styles
   tripDetailsModal: {
     backgroundColor: '#fff',
+    bottom:0,
     borderRadius: 20,
     width: '90%',
     maxHeight: '80%',
@@ -2883,6 +3238,8 @@ const styles = StyleSheet.create({
   },
 });
 
+
+
 const reverseGeocodeLocation = async (lat: number, lng: number) => {
   try {
     const res = await fetch(
@@ -2899,12 +3256,23 @@ const reverseGeocodeLocation = async (lat: number, lng: number) => {
 
 
 // Add this component before the NavigationApp component
-const AnalyticsOverlay = ({ analyticsData, selectedMotor }: { 
-  analyticsData: any, 
-  selectedMotor: Motor | null 
+const AnalyticsOverlay = ({ analyticsData, selectedMotor, userId }: {
+  analyticsData: any,
+  selectedMotor: Motor | null,
+  userId: String
 }) => {
-  const [isMinimized, setIsMinimized] = useState(false);
-  const animatedValue = useRef(new Animated.Value(1)).current;
+  const [motorData, setMotorData] = useState(selectedMotor);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const res = await fetch(`${LOCALHOST_IP}/user-motors/user/${userId}`);
+      const data = await res.json();
+      setMotorData(data);
+    };
+    fetchData();
+  }, [selectedMotor]);
+  const [isMinimized, setIsMinimized] = useState(true);
+  const animatedValue = useRef(new Animated.Value(0)).current;
 
   const toggleMinimize = () => {
     Animated.spring(animatedValue, {
@@ -2917,14 +3285,14 @@ const AnalyticsOverlay = ({ analyticsData, selectedMotor }: {
   };
 
   if (!selectedMotor) return null;
-
+  // setIsMinimized(true);
   return (
     <View style={styles.analyticsOverlay}>
       <LinearGradient
         colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.6)']}
         style={styles.analyticsGradient}
       >
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={toggleMinimize}
           style={styles.analyticsHeaderTouchable}
         >
@@ -2935,31 +3303,32 @@ const AnalyticsOverlay = ({ analyticsData, selectedMotor }: {
                 {selectedMotor.nickname || selectedMotor.name}
               </Text>
             </View>
-            <MaterialIcons 
-              name={isMinimized ? "expand-more" : "expand-less"} 
-              size={24} 
-              color="#fff" 
+            <MaterialIcons
+              name={isMinimized ? "expand-more" : "expand-less"}
+              size={24}
+              color="#fff"
             />
           </View>
         </TouchableOpacity>
 
         {/* Basic Info - Always visible */}
         <View style={styles.analyticsRow}>
-          <MaterialIcons 
-            name="local-gas-station" 
-            size={20} 
-            color={analyticsData.lowFuel ? '#e74c3c' : '#2ecc71'} 
+          <MaterialIcons
+            name="local-gas-station"
+            size={20}
+            color={analyticsData.lowFuel ? '#e74c3c' : '#2ecc71'}
           />
           <Text style={[styles.analyticsText, analyticsData.lowFuel && styles.warningText]}>
-            Fuel Level: {selectedMotor.currentFuelLevel}%
+            Fuel Level: {selectedMotor.currentFuelLevel.toFixed(0)}%
             {analyticsData.lowFuel && ' (Low)'}
           </Text>
         </View>
 
         <Animated.View style={{
           maxHeight: animatedValue.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, 300]
+            outputRange: [0, 300],
+            inputRange: [0, 1]
+
           }),
           opacity: animatedValue.interpolate({
             inputRange: [0, 1],
@@ -3009,10 +3378,10 @@ const AnalyticsOverlay = ({ analyticsData, selectedMotor }: {
 
           {/* Maintenance Status */}
           <View style={styles.analyticsRow}>
-            <MaterialIcons 
-              name="build" 
-              size={20} 
-              color={analyticsData.maintenanceDue ? '#e74c3c' : '#2ecc71'} 
+            <MaterialIcons
+              name="build"
+              size={20}
+              color={analyticsData.maintenanceDue ? '#e74c3c' : '#2ecc71'}
             />
             <Text style={[styles.analyticsText, analyticsData.maintenanceDue && styles.warningText]}>
               Maintenance: {analyticsData.maintenanceDue ? 'Due' : 'Up to date'}
@@ -3024,17 +3393,20 @@ const AnalyticsOverlay = ({ analyticsData, selectedMotor }: {
   );
 };
 
-const TripDetailsModal = ({ 
-  visible, 
+const TripDetailsModal = ({
+  visible,
   onClose,
   currentSpeed,
   distanceRemaining,
   timeElapsed,
   currentEta,
+  currentFuel,
   currentFuelUsed,
   isOverSpeedLimit,
   selectedRoute,
-  selectedMotor
+  selectedMotor,
+  distanceTraveled,
+
 }: {
   visible: boolean;
   onClose: () => void;
@@ -3042,11 +3414,23 @@ const TripDetailsModal = ({
   distanceRemaining: number;
   timeElapsed: number;
   currentEta: string | null;
+  currentFuel:number;
   currentFuelUsed: number;
   isOverSpeedLimit: boolean;
   selectedRoute: RouteData | null;
   selectedMotor: Motor | null;
+  distanceTraveled: number;
 }) => {
+  const [tick, setTick] = useState(0);
+
+  // Timer to trigger re-render every second
+  useEffect(() => {
+    if (!visible) return;
+    const interval = setInterval(() => {
+      setTick(prev => prev + 1);
+    }, 1000); // refresh every 1 second
+    return () => clearInterval(interval);
+  }, [visible]);
   const formatTime = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -3055,7 +3439,7 @@ const TripDetailsModal = ({
   };
 
   // Status checks with default values for optional properties
-  const lowFuel = (selectedMotor?.currentFuelLevel ?? 100) < 20;
+  const lowFuel = (selectedMotor?.currentFuelLevel ?? 70) < 20;
   const needsOilChange = selectedMotor?.oilChangeDue ?? false;
   const needsMaintenance = selectedMotor?.maintenanceDue ?? false;
 
@@ -3075,7 +3459,7 @@ const TripDetailsModal = ({
             </TouchableOpacity>
           </View>
 
-          <ScrollView 
+          <ScrollView
             style={styles.tripDetailsContent}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 20 }}
@@ -3084,7 +3468,7 @@ const TripDetailsModal = ({
             <View style={styles.detailsSection}>
               <Text style={styles.sectionTitle}>Current Stats</Text>
 
-              {/* Speed */}
+              {/* Speed
               <View style={[styles.detailRow, isOverSpeedLimit && styles.warningRow]}>
                 <MaterialIcons name="speed" size={24} color={isOverSpeedLimit ? "#e74c3c" : "#00ADB5"} />
                 <View style={styles.detailTextContainer}>
@@ -3092,6 +3476,29 @@ const TripDetailsModal = ({
                   <Text style={[styles.detailValue, isOverSpeedLimit && styles.warningText]}>
                     {currentSpeed.toFixed(1)} km/h
                     {isOverSpeedLimit && " ⚠️ Over Speed Limit"}
+                  </Text>
+                </View>
+              </View> */}
+
+
+              {/* Fuel Level */}
+              <View style={[styles.detailRow, lowFuel && styles.warningRow]}>
+                <MaterialIcons name="local-gas-station" size={24} color={lowFuel ? "#e74c3c" : "#00ADB5"} />
+                <View style={styles.detailTextContainer}>
+                  <Text style={styles.detailLabel}>Fuel Level</Text>
+                  <Text style={[styles.detailValue, lowFuel && styles.warningText]}>
+                    {Math.round(currentFuel)}%
+                    {lowFuel && " ⚠️ Low Fuel"}
+                  </Text>
+                </View>
+              </View>
+              {/* Distance Traveled */}
+              <View style={styles.detailRow}>
+                <MaterialIcons name="directions-bike" size={24} color="#00ADB5" />
+                <View style={styles.detailTextContainer}>
+                  <Text style={styles.detailLabel}>Distance Traveled</Text>
+                  <Text style={styles.detailValue}>
+                    {distanceTraveled.toFixed(2)} km
                   </Text>
                 </View>
               </View>
@@ -3124,20 +3531,19 @@ const TripDetailsModal = ({
               </View>
 
               {/* Current Fuel */}
-              <View style={styles.detailRow}>
+              {/* <View style={styles.detailRow}>
                 <MaterialIcons name="local-gas-station" size={24} color="#00ADB5" />
                 <View style={styles.detailTextContainer}>
                   <Text style={styles.detailLabel}>Fuel Used</Text>
                   <Text style={styles.detailValue}>{currentFuelUsed.toFixed(2)} L</Text>
                 </View>
-              </View>
+              </View> */}
             </View>
 
             {/* Estimated Stats Section */}
-            <View style={styles.detailsSection}>
+            {/* <View style={styles.detailsSection}>
               <Text style={styles.sectionTitle}>Route Estimates</Text>
 
-              {/* Estimated Distance */}
               <View style={styles.detailRow}>
                 <MaterialIcons name="map" size={24} color="#00ADB5" />
                 <View style={styles.detailTextContainer}>
@@ -3148,7 +3554,7 @@ const TripDetailsModal = ({
                 </View>
               </View>
 
-              {/* Estimated Time */}
+       
               <View style={styles.detailRow}>
                 <MaterialIcons name="access-time" size={24} color="#00ADB5" />
                 <View style={styles.detailTextContainer}>
@@ -3159,34 +3565,14 @@ const TripDetailsModal = ({
                 </View>
               </View>
 
-              {/* Estimated Fuel */}
-              <View style={styles.detailRow}>
-                <MaterialIcons name="local-gas-station" size={24} color="#00ADB5" />
-                <View style={styles.detailTextContainer}>
-                  <Text style={styles.detailLabel}>Estimated Fuel Consumption</Text>
-                  <Text style={styles.detailValue}>
-                    {selectedRoute ? `${(selectedRoute.fuelEstimate - 0.03).toFixed(2)}–${(selectedRoute.fuelEstimate + 0.03).toFixed(2)} L` : '--'}
-                  </Text>
-                  <Text style={styles.detailSubtext}>Varies based on real-world conditions</Text>
-                </View>
-              </View>
-            </View>
 
+
+            </View> */}
             {/* Motor Analytics Section */}
             <View style={styles.detailsSection}>
               <Text style={styles.sectionTitle}>Motor Analytics</Text>
 
-              {/* Fuel Level */}
-              <View style={[styles.detailRow, lowFuel && styles.warningRow]}>
-                <MaterialIcons name="local-gas-station" size={24} color={lowFuel ? "#e74c3c" : "#00ADB5"} />
-                <View style={styles.detailTextContainer}>
-                  <Text style={styles.detailLabel}>Fuel Level</Text>
-                  <Text style={[styles.detailValue, lowFuel && styles.warningText]}>
-                    {selectedMotor?.currentFuelLevel}%
-                    {lowFuel && " ⚠️ Low Fuel"}
-                  </Text>
-                </View>
-              </View>
+
 
               {/* Oil Change */}
               <View style={[styles.detailRow, needsOilChange && styles.warningRow]}>
@@ -3218,7 +3604,7 @@ const TripDetailsModal = ({
                 <View style={styles.detailTextContainer}>
                   <Text style={styles.detailLabel}>Total Distance Traveled</Text>
                   <Text style={styles.detailValue}>
-                    {selectedMotor ? (selectedMotor.totalDistance / 1000).toFixed(2) : '--'} km
+                    {selectedMotor ? (selectedMotor.totalDistance).toFixed(2) : '--'} km
                   </Text>
                 </View>
               </View>
@@ -3261,158 +3647,163 @@ const NavigationControls: React.FC<{
   currentEta,
   isOverSpeedLimit,
 }) => {
-  const formatTime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    return `${hrs}h ${mins}m`;
+    const formatTime = (seconds: number) => {
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      return `${hrs}h ${mins}m`;
+    };
+
+    return (
+      <View style={styles.navigationControlsContainer}>
+        {/* Quick Stats Row */}
+        <View style={styles.navigationStatsBar}>
+          <View style={styles.navigationStat}>
+            <MaterialIcons name="straighten" size={20} color="#fff" />
+            <View>
+              <Text style={styles.navigationStatValue}>{(distanceRemaining / 1000).toFixed(1)} km</Text>
+              <Text style={styles.navigationStatLabel}>Remaining</Text>
+            </View>
+          </View>
+
+          <View style={styles.navigationStat}>
+            <MaterialIcons name="timer" size={20} color="#fff" />
+            <View>
+              <Text style={styles.navigationStatValue}>{formatTime(timeElapsed)}</Text>
+              <Text style={styles.navigationStatLabel}>Duration</Text>
+            </View>
+          </View>
+
+          <View style={styles.navigationStat}>
+            <MaterialIcons name="schedule" size={20} color="#fff" />
+            <View>
+              <Text style={styles.navigationStatValue}>{currentEta || '--'}</Text>
+              <Text style={styles.navigationStatLabel}>ETA</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Control Buttons */}
+        <View style={styles.navigationButtonsContainer}>
+          <TouchableOpacity
+            onPress={() => {
+              Alert.alert(
+                'Record Maintenance',
+                'What type of maintenance would you like to record?',
+                [
+                  {
+                    text: 'Refuel',
+                    onPress: () => onMaintenanceAction('refuel'),
+                    style: 'default'
+                  },
+                  {
+                    text: 'Oil Change',
+                    onPress: () => onMaintenanceAction('oil_change'),
+                    style: 'default'
+                  },
+                  {
+                    text: 'Tune Up',
+                    onPress: () => onMaintenanceAction('tune_up'),
+                    style: 'default'
+                  },
+                  {
+                    text: 'Cancel',
+                    style: 'cancel'
+                  }
+                ],
+                { cancelable: true }
+              );
+            }}
+            style={styles.navigationControlButton}
+          >
+            <LinearGradient
+              colors={['#00ADB5', '#00858B']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.navigationControlGradient}
+            >
+              <MaterialIcons name="build" size={24} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.navigationControlLabel}>Maintenance</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={onShowDetails}
+            style={styles.navigationControlButton}
+          >
+            <LinearGradient
+              colors={['#3498db', '#2980b9']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.navigationControlGradient}
+            >
+              <MaterialIcons name="analytics" size={24} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.navigationControlLabel}>Details</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={onEndNavigation}
+            style={styles.navigationControlButton}
+          >
+            <LinearGradient
+              colors={['#e74c3c', '#c0392b']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.navigationControlGradient}
+            >
+              <MaterialIcons name="stop" size={24} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.navigationControlLabel}>End</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   };
-
-  return (
-    <View style={styles.navigationControlsContainer}>
-      {/* Quick Stats Row */}
-      <View style={styles.navigationStatsBar}>
-        <View style={styles.navigationStat}>
-          <MaterialIcons name="straighten" size={20} color="#fff" />
-          <View>
-            <Text style={styles.navigationStatValue}>{(distanceRemaining / 1000).toFixed(1)} km</Text>
-            <Text style={styles.navigationStatLabel}>Remaining</Text>
-          </View>
-        </View>
-
-        <View style={styles.navigationStat}>
-          <MaterialIcons name="timer" size={20} color="#fff" />
-          <View>
-            <Text style={styles.navigationStatValue}>{formatTime(timeElapsed)}</Text>
-            <Text style={styles.navigationStatLabel}>Duration</Text>
-          </View>
-        </View>
-
-        <View style={styles.navigationStat}>
-          <MaterialIcons name="schedule" size={20} color="#fff" />
-          <View>
-            <Text style={styles.navigationStatValue}>{currentEta || '--'}</Text>
-            <Text style={styles.navigationStatLabel}>ETA</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Control Buttons */}
-      <View style={styles.navigationButtonsContainer}>
-        <TouchableOpacity
-          onPress={() => {
-            Alert.alert(
-              'Record Maintenance',
-              'What type of maintenance would you like to record?',
-              [
-                {
-                  text: 'Refuel',
-                  onPress: () => onMaintenanceAction('refuel'),
-                  style: 'default'
-                },
-                {
-                  text: 'Oil Change',
-                  onPress: () => onMaintenanceAction('oil_change'),
-                  style: 'default'
-                },
-                {
-                  text: 'Tune Up',
-                  onPress: () => onMaintenanceAction('tune_up'),
-                  style: 'default'
-                },
-                {
-                  text: 'Cancel',
-                  style: 'cancel'
-                }
-              ],
-              { cancelable: true }
-            );
-          }}
-          style={styles.navigationControlButton}
-        >
-          <LinearGradient
-            colors={['#00ADB5', '#00858B']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.navigationControlGradient}
-          >
-            <MaterialIcons name="build" size={24} color="#fff" />
-          </LinearGradient>
-          <Text style={styles.navigationControlLabel}>Maintenance</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={onShowDetails}
-          style={styles.navigationControlButton}
-        >
-          <LinearGradient
-            colors={['#3498db', '#2980b9']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.navigationControlGradient}
-          >
-            <MaterialIcons name="analytics" size={24} color="#fff" />
-          </LinearGradient>
-          <Text style={styles.navigationControlLabel}>Details</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={onEndNavigation}
-          style={styles.navigationControlButton}
-        >
-          <LinearGradient
-            colors={['#e74c3c', '#c0392b']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.navigationControlGradient}
-          >
-            <MaterialIcons name="stop" size={24} color="#fff" />
-          </LinearGradient>
-          <Text style={styles.navigationControlLabel}>End</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
 
 // Add this function before the NavigationApp component
 const fetchMotorAnalytics = async (userId: string): Promise<Motor[]> => {
   try {
     const response = await fetch(`${LOCALHOST_IP}/api/user-motors/user/${userId}`);
-    if (!response.ok) {
-      throw new Error('Failed to fetch motor analytics');
-    }
+    if (!response.ok) throw new Error("Failed to fetch motor analytics");
+
     const rawData = await response.json();
-    
-    // Transform the data to match the Motor type
+
     const data: Motor[] = rawData.map((motor: any) => ({
       _id: motor._id,
-      name: motor.name,
-      nickname: motor.nickname,
-      fuelEfficiency: motor.fuelEfficiency,
-      engineDisplacement: motor.engineDisplacement,
-      fuelType: motor.fuelType || 'Regular',
-      oilType: motor.oilType || 'Mineral',
-      age: motor.age || 0,
-      totalDistance: motor.totalDistance || 0,
-      currentFuelLevel: motor.currentFuelLevel || 100,
-      tankCapacity: motor.tankCapacity || 15,
-      lastMaintenanceDate: motor.lastMaintenanceDate,
-      lastOilChange: motor.lastOilChange,
-      lastRegisteredDate: motor.lastRegisteredDate,
-      lastTripDate: motor.lastTripDate,
-      lastRefuelDate: motor.lastRefuelDate,
-      fuelLevel: motor.currentFuelLevel || 100,
-      oilChangeDue: motor.oilChangeDue || false,
-      maintenanceDue: motor.maintenanceDue || false,
+      name: motor.name || "",
+      nickname: motor.nickname || "",
+      fuelEfficiency: motor.fuelEfficiency ?? 0,
+      engineDisplacement: motor.engineDisplacement ?? 0,
+      fuelType: motor.fuelType || "Regular",
+      oilType: motor.oilType || "Mineral",
+      age: motor.age ?? 0,
+      totalDistance: motor.analytics?.totalDistance ?? 0,
+      currentFuelLevel: motor.currentFuelLevel ?? 0,
+      tankCapacity: motor.tankCapacity ?? 15,
+      lastMaintenanceDate: motor.lastMaintenanceDate ?? null,
+      lastOilChange: motor.lastOilChange ?? null,
+      lastRegisteredDate: motor.lastRegisteredDate ?? null,
+      lastTripDate: motor.lastTripDate ?? null,
+      lastRefuelDate: motor.lastRefuelDate ?? null,
+      fuelLevel: motor.currentFuelLevel ?? 0,
+      oilChangeDue: motor.oilChangeDue ?? false,
+      maintenanceDue: motor.maintenanceDue ?? false,
       analytics: {
-        totalDistance: motor.analytics?.totalDistance || 0,
-        tripsCompleted: motor.analytics?.tripsCompleted || 0,
-        totalFuelUsed: motor.analytics?.totalFuelUsed || 0
-      }
+        totalDistance: motor.analytics?.totalDistance ?? 0,
+        tripsCompleted: motor.analytics?.tripsCompleted ?? 0,
+        totalFuelUsed: motor.analytics?.totalFuelUsed ?? 0,
+      },
+      // ✅ Add virtuals
+      totalDrivableDistance: motor.totalDrivableDistance ?? 0,
+      totalDrivableDistanceWithCurrentGas: motor.totalDrivableDistanceWithCurrentGas ?? 0,
+      isLowFuel: motor.isLowFuel ?? false,
     }));
+
     return data;
   } catch (error) {
-    console.error('Error fetching motor analytics:', error);
+    console.error("Error fetching motor analytics:", error);
     return [];
   }
 };
+
+

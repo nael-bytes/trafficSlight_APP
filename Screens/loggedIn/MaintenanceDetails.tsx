@@ -380,14 +380,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    paddingTop: Platform.OS === 'android' ? 40 : 16,
+    paddingTop: Platform.OS === 'android' ? 20 : 16,
   },
   backButton: {
     padding: 8,
     marginRight: 16,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
     color: '#fff',
   },

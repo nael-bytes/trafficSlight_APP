@@ -41,7 +41,7 @@ type RouteParams = {
 
 type SortOption = {
   label: string;
-  value: 'date' | 'liters' | 'cost' | 'odometer';
+  value: 'date' | 'liters' | 'cost' | 'odometer' | 'name';
   icon: keyof typeof Ionicons.glyphMap;
 };
 
@@ -50,6 +50,7 @@ const sortOptions: SortOption[] = [
   { label: 'Volume', value: 'liters', icon: 'water-outline' },
   { label: 'Cost', value: 'cost', icon: 'pricetag-outline' },
   { label: 'Odometer', value: 'odometer', icon: 'speedometer-outline' },
+  { label: 'Name', value: 'name', icon: 'person-outline' },
 ];
 
 export default function FuelLogDetailsScreen() {
@@ -83,7 +84,8 @@ export default function FuelLogDetailsScreen() {
       setLogs(sorted);
       setFiltered(sorted);
     } catch {
-      alert("Failed to fetch fuel logs.");
+      // alert("Failed to fetch fuel logs.");
+      console.log("Failed to fetch fuel logs.");
     } finally {
       setLoading(false);
     }
