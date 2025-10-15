@@ -4,7 +4,7 @@ import MapView, { Marker } from "react-native-maps";
 import { Ionicons } from "@expo/vector-icons";
 import tw from "twrnc";
 import axios from "axios";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import { LOCALHOST_IP } from "@env";
 
 const API_URL = `${LOCALHOST_IP}/api/saved-destinations`;

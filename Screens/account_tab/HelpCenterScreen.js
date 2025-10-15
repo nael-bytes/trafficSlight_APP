@@ -15,7 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import axios from "axios";
 import { LOCALHOST_IP } from "@env"; // Replace with your actual IP or API base
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 
 export default function HelpCenterScreen({ navigation }) {
 

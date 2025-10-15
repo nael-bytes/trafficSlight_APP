@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, Alert } from "react-native";
 import tw from "twrnc";
 import axios from "axios";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 
 export default function ChangeEmailScreen({ navigation }) {
   const { user } = useUser();

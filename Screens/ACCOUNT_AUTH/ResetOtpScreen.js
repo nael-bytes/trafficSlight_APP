@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
-import { View, Alert, StyleSheet, Text } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { View, Alert, StyleSheet, Text, TouchableOpacity } from "react-native";
 import { TextInput, Button } from "react-native-paper";
 import { LOCALHOST_IP } from "@env";
 
 export default function ResetOtpScreen({ navigation, route }) {
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(60); // seconds
   const email = route.params?.email;
 
   useEffect(() => {
@@ -29,9 +31,18 @@ export default function ResetOtpScreen({ navigation, route }) {
       }
     };
 
-    if (email) sendOtp();
-    else navigation.goBack();
+    if (email) {
+      sendOtp();
+      setCooldown(60);
+    } else navigation.goBack();
   }, []);
+
+  // cooldown timer
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setInterval(() => setCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, [cooldown]);
 
   const handleVerifyOtp = async () => {
     if (!otp) return Alert.alert("Missing", "Enter the OTP sent to your email.");
@@ -57,6 +68,26 @@ export default function ResetOtpScreen({ navigation, route }) {
     }
   };
 
+  const handleResend = async () => {
+    if (cooldown > 0 || resending) return;
+    setResending(true);
+    try {
+      const res = await fetch(`${LOCALHOST_IP}/api/auth/request-reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.msg || 'Failed to resend OTP');
+      Alert.alert('OTP Resent', 'Please check your email for the new code.');
+      setCooldown(60);
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Failed to resend OTP');
+    } finally {
+      setResending(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Enter OTP</Text>
@@ -75,6 +106,16 @@ export default function ResetOtpScreen({ navigation, route }) {
       <Button mode="contained" onPress={handleVerifyOtp} loading={loading}>
         {loading ? "Verifying..." : "Verify OTP"}
       </Button>
+
+      <View style={{ marginTop: 12, alignItems: 'center' }}>
+        {cooldown > 0 ? (
+          <Text style={{ color: '#aaa' }}>Resend available in {cooldown}s</Text>
+        ) : (
+          <TouchableOpacity onPress={handleResend} disabled={resending}>
+            <Text style={{ color: '#4dabf7', fontWeight: '600' }}>{resending ? 'Resending...' : 'Resend code'}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }

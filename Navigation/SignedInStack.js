@@ -6,12 +6,12 @@ import { useColorScheme, View } from 'react-native';
 
 import ProfileScreen from "../Screens/loggedIn/ProfileScreen";
 
-import RouteSelectionScreen from "../Screens/RouteSelectionScreen";
+import RouteSelectionScreen from "../Screens/RouteSelectionScreenOptimized";
 import MapScreenTry from "../Screens/loggedIn/MapScreenTry";
 
 
 // import TrackingScreen from "../Screens/_notImportant/TrackingScreen";
-import AddMotorScreen from "../Screens/account_tab/AddMotorScreen";
+import AddMotorScreen from "../Screens/account_tab/AddMotorScreenImproved";
 import HelpCenterScreen from "../Screens/account_tab/HelpCenterScreen";
 import ReportBugScreen from "../Screens/account_tab/ReportBug";
 import AccountSettingsScreen from "../Screens/account_tab/AccountSettingsScreen";

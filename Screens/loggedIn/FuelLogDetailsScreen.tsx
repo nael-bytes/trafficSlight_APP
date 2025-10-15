@@ -20,7 +20,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from 'expo-linear-gradient';
 import { StackNavigationProp } from '@react-navigation/stack';
 
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 
 // Use the deployed backend URL
 const API_BASE_URL = 'https://ts-backend-1-jyit.onrender.com';

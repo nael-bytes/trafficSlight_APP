@@ -21,7 +21,7 @@ import * as Location from "expo-location";
 import * as FileSystem from "expo-file-system";
 import polyline from "@mapbox/polyline";
 import { GOOGLE_MAPS_API_KEY, LOCALHOST_IP } from "@env";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import Toast from 'react-native-toast-message';
 import { LinearGradient } from 'expo-linear-gradient';
 import type { Motor } from '../loggedIn/types';

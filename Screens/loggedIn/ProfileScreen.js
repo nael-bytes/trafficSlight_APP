@@ -11,8 +11,8 @@ import {
   ScrollView,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { AuthContext } from "../../AuthContext/AuthContext";
-import { useUser } from "../../AuthContext/UserContext";
+import { AuthContext } from "../../AuthContext/AuthContextImproved";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from 'expo-linear-gradient';
 

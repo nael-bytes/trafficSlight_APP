@@ -14,8 +14,10 @@ import { TextInput, Button, HelperText } from "react-native-paper";
 import * as Google from "expo-auth-session/providers/google";
 
 import { GOOGLE_CLIENT_ID, LOCALHOST_IP } from "@env";
-import { AuthContext } from "../../AuthContext/AuthContext";
-import { useUser } from "../../AuthContext/UserContext";
+import { AuthContext } from "../../AuthContext/AuthContextImproved";
+import { useUser } from "../../AuthContext/UserContextImproved";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetchGasStations, fetchReports, fetchUserMotors } from "../../utils/api";
 
 const inputTheme = {
   colors: {
@@ -43,6 +45,27 @@ export default function LoginScreen({ navigation }) {
 
   const { login } = useContext(AuthContext);
   const { saveUser } = useUser();
+
+  const preloadUserData = async (userId) => {
+    try {
+      // Fetch in parallel, but don't block UI on failures
+      const [reportsRes, gasRes, motorsRes] = await Promise.allSettled([
+        fetchReports(),
+        fetchGasStations(),
+        fetchUserMotors(userId),
+      ]);
+
+      if (reportsRes.status === 'fulfilled') {
+        await AsyncStorage.setItem('cachedReports', JSON.stringify(reportsRes.value || []));
+      }
+      if (gasRes.status === 'fulfilled') {
+        await AsyncStorage.setItem('cachedGasStations', JSON.stringify(gasRes.value || []));
+      }
+      if (motorsRes.status === 'fulfilled') {
+        await AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(motorsRes.value || []));
+      }
+    } catch {}
+  };
 
   const validateEmail = (email) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -97,6 +120,8 @@ const handleLogin = async () => {
       await login(data.token);
       if (data.user) {
         await saveUser(data.user);
+        // Preload and cache user-related data (motors, plus shared data)
+        preloadUserData(data.user._id);
       }
 
       setEmail("");
@@ -201,6 +226,7 @@ const handleLogin = async () => {
             await login(data.token);
             if (data.user) {
               await saveUser(data.user);
+              preloadUserData(data.user._id);
             }
             
             Alert.alert(

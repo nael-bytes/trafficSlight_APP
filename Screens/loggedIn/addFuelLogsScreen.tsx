@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import DropDownPicker from "react-native-dropdown-picker";
 import axios from "axios";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import { useNavigation } from "@react-navigation/native";
 import { LOCALHOST_IP } from "@env";
 import AsyncStorage from "@react-native-async-storage/async-storage";

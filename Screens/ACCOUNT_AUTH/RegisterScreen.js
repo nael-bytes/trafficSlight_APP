@@ -17,7 +17,7 @@ import {
   List,
   HelperText,
 } from "react-native-paper";
-import { AuthContext } from "../../AuthContext/AuthContext";
+import { AuthContext } from "../../AuthContext/AuthContextImproved";
 import { LOCALHOST_IP } from "@env";
 
 // Sample barangay data for Valenzuela

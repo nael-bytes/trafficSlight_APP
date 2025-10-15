@@ -23,7 +23,7 @@ import DropDownPicker from "react-native-dropdown-picker";
 import { useFocusEffect } from "@react-navigation/native";
 
 import { LOCALHOST_IP, GOOGLE_MAPS_API_KEY } from "@env";
-import { useUser } from "../AuthContext/UserContext"; // Assuming you have a custom hook for user context
+import { useUser } from "../AuthContext/UserContextImproved"; // Assuming you have a custom hook for user context
 
 
 const FAB = ({ onPress, label, bottom }: { onPress: () => void; label: string; bottom: number }) => (

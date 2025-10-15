@@ -27,7 +27,9 @@ import * as Location from "expo-location";
 import * as FileSystem from "expo-file-system";
 import polyline from "@mapbox/polyline";
 import { GOOGLE_MAPS_API_KEY, LOCALHOST_IP } from "@env";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
+import { startBackgroundLocationTracking, stopBackgroundLocationTracking, resumeTrackingFromBackground } from "../../utils/backgroundLocation";
+import { backgroundStateManager } from "../../utils/backgroundStateManager";
 
 
 import SearchBar from "./SearchBar";
@@ -458,6 +460,8 @@ export default function NavigationApp({ navigation }: { navigation: any }) {
   const mapRef = useRef<MapView>(null);
   const searchRef = useRef<any>(null);
   const voiceNavTimeout = useRef<NodeJS.Timeout>();
+  const isBackgroundTracking = useRef(false);
+  const backgroundTrackingId = useRef<string | null>(null);
 
   // Authenticated user context
   const { user } = useUser();
@@ -1011,7 +1015,7 @@ const saveMaintenanceRecord = async (
     const startTimeRef = { current: navigationStartTime };
 
     let subscription: Location.LocationSubscription;
-    let timer: NodeJS.Timer;
+    let timer: ReturnType<typeof setInterval>;
 
     // Throttle speed warning
     const lastWarningTime = { current: 0 };
@@ -1128,7 +1132,7 @@ const saveMaintenanceRecord = async (
 
     return () => {
       if (subscription) subscription.remove();
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
   }, [isNavigating]); // 👈 only depends on navigating state
 
@@ -1163,10 +1167,13 @@ const saveMaintenanceRecord = async (
           },
           {
             text: "Yes, Start",
-            onPress: () => {
+            onPress: async () => {
               setIsNavigating(true);
               setNavigationStartTime(Date.now());
               setIsFollowingUser(true);
+              
+              // Start background tracking for navigation
+              await startBackgroundNavigation();
             },
           },
         ]
@@ -1175,6 +1182,9 @@ const saveMaintenanceRecord = async (
       setIsNavigating(true);
       setNavigationStartTime(Date.now());
       setIsFollowingUser(true);
+      
+      // Start background tracking for navigation
+      await startBackgroundNavigation();
     }
 
     // Get the start address
@@ -1486,6 +1496,9 @@ const saveMaintenanceRecord = async (
     setIsFollowingUser(false);
     setNavigationStartTime(null);
 
+    // Stop background tracking
+    await stopBackgroundNavigation();
+
     // Check for required data
     if (!user) {
       console.warn("⚠️ Cannot save trip summary: No user data");
@@ -1599,6 +1612,100 @@ const saveMaintenanceRecord = async (
     startAddress,
     currentLocation
   ]);
+
+  // Background navigation functions
+  const startBackgroundNavigation = useCallback(async () => {
+    if (!selectedMotor || !isNavigating) return;
+    
+    try {
+      const tripId = `nav_${Date.now()}`;
+      backgroundTrackingId.current = tripId;
+      
+      const success = await startBackgroundLocationTracking(
+        tripId,
+        selectedMotor,
+        {
+          distance: 0,
+          fuelConsumed: 0,
+          duration: 0,
+          avgSpeed: 0,
+          speed: 0,
+        }
+      );
+      
+      if (success) {
+        isBackgroundTracking.current = true;
+        console.log('[MapScreen] Background navigation started');
+        
+        Toast.show({
+          type: 'info',
+          text1: 'Background Navigation',
+          text2: 'Navigation will continue in background',
+          visibilityTime: 3000,
+        });
+      }
+    } catch (error) {
+      console.error('[MapScreen] Error starting background navigation:', error);
+    }
+  }, [selectedMotor, isNavigating]);
+
+  const stopBackgroundNavigation = useCallback(async () => {
+    try {
+      await stopBackgroundLocationTracking();
+      isBackgroundTracking.current = false;
+      backgroundTrackingId.current = null;
+      console.log('[MapScreen] Background navigation stopped');
+    } catch (error) {
+      console.error('[MapScreen] Error stopping background navigation:', error);
+    }
+  }, []);
+
+  // Handle app state changes for background navigation
+  useEffect(() => {
+    const handleAppStateChange = (appState: string) => {
+      if (appState === 'background' && isNavigating) {
+        console.log('[MapScreen] App going to background, starting background navigation');
+        startBackgroundNavigation();
+      } else if (appState === 'active' && isBackgroundTracking.current) {
+        console.log('[MapScreen] App coming to foreground, stopping background navigation');
+        stopBackgroundNavigation();
+      }
+    };
+
+    backgroundStateManager.addListener(handleAppStateChange);
+    
+    return () => {
+      backgroundStateManager.removeListener(handleAppStateChange);
+    };
+  }, [isNavigating, startBackgroundNavigation, stopBackgroundNavigation]);
+
+  // Check for background tracking resume on mount
+  useEffect(() => {
+    const checkBackgroundTracking = async () => {
+      try {
+        const backgroundState = await resumeTrackingFromBackground();
+        if (backgroundState && backgroundState.isTracking) {
+          console.log('[MapScreen] Resuming background navigation');
+          isBackgroundTracking.current = true;
+          backgroundTrackingId.current = backgroundState.tripId;
+          
+          // Update UI to reflect navigation state
+          setIsNavigating(true);
+          
+          Toast.show({
+            type: 'info',
+            text1: 'Navigation Resumed',
+            text2: 'Your navigation was tracked in the background',
+            visibilityTime: 3000,
+          });
+        }
+      } catch (error) {
+        console.error('[MapScreen] Error checking background tracking:', error);
+      }
+    };
+
+    checkBackgroundTracking();
+  }, []);
 
 
 

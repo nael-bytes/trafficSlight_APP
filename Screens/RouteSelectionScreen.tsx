@@ -15,7 +15,7 @@ const { width, height } = Dimensions.get("window");
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
 import DropDownPicker from "react-native-dropdown-picker";
-import { useUser } from "../AuthContext/UserContext";
+import { useUser } from "../AuthContext/UserContextImproved";
 import { LOCALHOST_IP, GOOGLE_MAPS_API_KEY } from "@env";
 import * as Linking from "expo-linking";
 import { LinearGradient } from 'expo-linear-gradient';
@@ -156,7 +156,7 @@ type Props = MapComponentProps;
 
 export default function RouteSelectionScreen({ navigation, route }) {
   const { focusLocation } = route.params || {};
-  const { user, loading } = useUser();
+  const { user } = useUser();
 
   const mapRef = useRef(null);
   const locationSubscription = useRef(null);
@@ -200,10 +200,6 @@ export default function RouteSelectionScreen({ navigation, route }) {
     fuelConsumed: 0,    // L
     avgSpeed: 0,        // km/h
     speed: 0,           // km/h current
-    timeStarted: null,
-    timeEnded: null,
-
-
   });
 
   const [isTracking, setIsTracking] = useState(false);
@@ -240,15 +236,7 @@ export default function RouteSelectionScreen({ navigation, route }) {
       setImage(result.assets[0].uri);
     }
   };
-
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#007bff" />
-        <Text>Loading user...</Text>
-      </View>
-    );
-  }
+  // 1️⃣ Extract fetchData OUTSIDE so both effects can call it
   const fetchData = useCallback(async (userId: string, signal?: AbortSignal) => {
     try {
       const endpoints = [
@@ -258,6 +246,7 @@ export default function RouteSelectionScreen({ navigation, route }) {
       ];
 
       const results = await Promise.allSettled(endpoints);
+
       const processFetchResult = async (settled: PromiseSettledResult<Response>) => {
         if (settled.status !== "fulfilled") return { ok: false, error: settled.reason };
         const res = settled.value;
@@ -267,23 +256,29 @@ export default function RouteSelectionScreen({ navigation, route }) {
 
       const [reportsRes, gasRes, motorsRes] = await Promise.all(results.map(processFetchResult));
 
+      // reports
       if (reportsRes.ok && Array.isArray(reportsRes.json)) {
         setReportMarkers(reportsRes.json);
         await AsyncStorage.setItem("cachedReports", JSON.stringify(reportsRes.json));
       }
+
+      // gas stations
       if (gasRes.ok && Array.isArray(gasRes.json)) {
         setGasStations(gasRes.json);
         await AsyncStorage.setItem("cachedGasStations", JSON.stringify(gasRes.json));
       }
+
+      // motors
       if (motorsRes.ok && Array.isArray(motorsRes.json)) {
         setMotors(motorsRes.json);
+        if (motorsRes.json.length > 0) setSelectedMotor(motorsRes.json[0]);
         await AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(motorsRes.json));
       }
     } catch (err: any) {
       if (err.name !== "AbortError") console.warn("fetchData error:", err);
     }
   }, []);
-
+  // 2️⃣ Initial load (cached first, then fresh)
   useEffect(() => {
     if (!user?._id) return;
     let isMounted = true;
@@ -321,24 +316,24 @@ export default function RouteSelectionScreen({ navigation, route }) {
       controller.abort();
     };
   }, [user?._id, fetchData]);
-
+  // 3️⃣ Auto-refresh every 10s (if not tracking)
   useEffect(() => {
-    if (!user?._id) return;
+    if (!user?._id || isTracking) return;
     const interval = setInterval(() => {
-      console.log("⏳ Auto-refreshing data...");
+      // console.log("⏳ Auto-refreshing data...");
       fetchData(user._id);
     }, 10000);
     return () => clearInterval(interval);
-  }, [user?._id, fetchData]);
+  }, [user?._id, isTracking, fetchData]);
 
-  // ✅ Conditional rendering comes AFTER hooks
-  if (!user) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text>No user found. Please log in again.</Text>
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (!user?._id || !isTracking) return;
+    const interval = setInterval(() => {
+      // console.log("⏳ Auto-refreshing data...");
+      fetchData(user._id);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [user?._id, isTracking, fetchData]);
 
 
   const getCurrentLocation = useCallback(async () => {
@@ -371,15 +366,15 @@ export default function RouteSelectionScreen({ navigation, route }) {
     }
   }, []);
 
-  // const fetchValenzuelaGasStations = async () => {
-  //   try {
-  //     const res = await fetch(`${LOCALHOST_IP}/api/gas-stations`);
-  //     const data = await res.json();
-  //     setGasStations(data || []);
-  //   } catch (err) {
-  //     console.error("Gas fetch error:", err);
-  //   }
-  // };
+  const fetchValenzuelaGasStations = async () => {
+    try {
+      const res = await fetch(`${LOCALHOST_IP}/api/gas-stations`);
+      const data = await res.json();
+      setGasStations(data || []);
+    } catch (err) {
+      console.error("Gas fetch error:", err);
+    }
+  };
 
   const submitTrafficReport = async () => {
     if (submitting || !description.trim()) {
@@ -423,53 +418,55 @@ export default function RouteSelectionScreen({ navigation, route }) {
 
     // Reset route and stats
     setRouteCoordinates([]);
-    const startTime = Date.now();
     setRideStats({
       duration: 0,
       distance: 0,
       fuelConsumed: 0,
       avgSpeed: 0,
       speed: 0,
-      timeStarted: startTime,
-      timeEnded: null,
     });
 
-    trackingStartTimeRef.current = startTime;
+    trackingStartTimeRef.current = Date.now();
     lastLocationRef.current = null;
 
-    // Clear previous subscriptions / intervals
-    trackingLocationSub.current?.remove();
-    trackingLocationSub.current = null;
+    // Ensure any previous subs/intervals cleared
+    if (trackingLocationSub.current) {
+      trackingLocationSub.current.remove();
+      trackingLocationSub.current = null;
+    }
     if (statsTimer.current) {
       clearInterval(statsTimer.current);
       statsTimer.current = null;
     }
 
-    // Duration timer (updates every second)
+    // Start duration timer (seconds)
     statsTimer.current = setInterval(() => {
       setRideStats(prev => {
         const newDuration = prev.duration + 1;
-        const avgSpeed = newDuration > 0 ? prev.distance / (newDuration / 3600) : 0;
+        const avgSpeed = newDuration > 0 ? (prev.distance / (newDuration / 3600)) : 0; // km/h
         return { ...prev, duration: newDuration, avgSpeed };
       });
     }, 1000);
 
+    // Start a high-frequency location watcher specifically for tracking
     try {
       trackingLocationSub.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.Highest,
-          timeInterval: 1000, // 1s
-          distanceInterval: 1, // 1m
+          // use short interval so distance & speed are smoother; adjust as needed
+          timeInterval: 1000, // ms
+          distanceInterval: 1, // meters
         },
         (loc) => {
-          if (!loc?.coords) return;
+          if (!loc || !loc.coords) return;
 
-          const { latitude: lat, longitude: lon, speed, timestamp = Date.now() } = loc.coords;
+          const lat = loc.coords.latitude;
+          const lon = loc.coords.longitude;
+          const timestamp = (loc.timestamp ?? Date.now()); // ms
 
-          // Update route
           setRouteCoordinates(prev => [...prev, { latitude: lat, longitude: lon }]);
 
-          // Calculate distance delta
+          // compute delta distance from last location
           const last = lastLocationRef.current;
           let distanceDeltaKm = 0;
           if (last) {
@@ -477,47 +474,48 @@ export default function RouteSelectionScreen({ navigation, route }) {
           }
           lastLocationRef.current = { latitude: lat, longitude: lon, timestamp };
 
-          // Current speed
+          // compute speed: prefer device speed (m/s) if available, else derive
           let currentSpeedKmh = 0;
-          if (typeof speed === "number" && !isNaN(speed)) {
-            currentSpeedKmh = Math.max(0, speed) * 3.6; // m/s → km/h
-          } else if (last && last.timestamp !== timestamp) {
-            const dtHours = Math.max(0.001, (timestamp - last.timestamp) / 3600000); // ms → hours
-            currentSpeedKmh = distanceDeltaKm / dtHours;
+          if (typeof loc.coords.speed === "number" && !isNaN(loc.coords.speed)) {
+            currentSpeedKmh = Math.max(0, loc.coords.speed) * 3.6; // m/s -> km/h
+          } else if (last && timestamp && last.timestamp !== timestamp) {
+            const dtSeconds = Math.max(0.001, (timestamp - last.timestamp) / 1000);
+            currentSpeedKmh = (distanceDeltaKm / (dtSeconds / 3600)); // km/h
+          } else {
+            currentSpeedKmh = 0;
           }
-
-          // Update ride stats
+          //test
           setRideStats(prev => {
-            const newDistance = prev.distance + distanceDeltaKm;
+            const newDistance = +(prev.distance + distanceDeltaKm);
+            // fuel consumed: distance (km) / fuelEfficiency (km per L)
             const fuelEfficiency = selectedMotor?.fuelEfficiency ?? 0;
-            const fuelDelta = fuelEfficiency > 0 ? distanceDeltaKm / fuelEfficiency : 0;
-            const newFuelConsumed = prev.fuelConsumed + fuelDelta;
+            const fuelDelta = (fuelEfficiency > 0) ? (distanceDeltaKm / fuelEfficiency) : 0;
+            const newFuel = prev.fuelConsumed + fuelDelta;
 
-            const elapsedSeconds = Math.floor((Date.now() - trackingStartTimeRef.current) / 1000);
-            const avgSpeed = elapsedSeconds > 0 ? newDistance / (elapsedSeconds / 3600) : prev.avgSpeed;
+            // avg speed recomputed using total distance and elapsed time if available
+            const elapsedSeconds = (trackingStartTimeRef.current) ? Math.floor((Date.now() - trackingStartTimeRef.current) / 1000) : prev.duration;
+            const avgSpeed = elapsedSeconds > 0 ? (newDistance / (elapsedSeconds / 3600)) : prev.avgSpeed;
+            const newGas = ((selectedMotor.totalDrivableDistanceWithCurrentGas - (distanceDeltaKm + newDistance)) / selectedMotor.totalDrivableDistance) * 100;
+            console.log("new gas", newGas);
+            api.updateFuelLevel(selectedMotor._id, newGas);
 
-            // Update fuel level in backend
-            if (selectedMotor) {
-              const remainingGas = ((selectedMotor.totalDrivableDistanceWithCurrentGas - newDistance) / selectedMotor.totalDrivableDistance) * 100;
-              api.updateFuelLevel(selectedMotor._id, remainingGas);
-            }
-
+            console.log("backendGas:", selectedMotor.currentFuelLevel);
             return {
               ...prev,
               distance: newDistance,
-              fuelConsumed: newFuelConsumed,
+              fuelConsumed: newFuel,
               speed: currentSpeedKmh,
               avgSpeed,
             };
           });
 
-          // Auto-center map
+          // ✅ Auto-center map
           mapRef.current?.animateToRegion({
             latitude: lat,
             longitude: lon,
             latitudeDelta: region.latitudeDelta ?? 0.01,
             longitudeDelta: region.longitudeDelta ?? 0.01,
-          }, 500);
+          }, 500); // 500ms animation
         }
       );
 
@@ -530,32 +528,12 @@ export default function RouteSelectionScreen({ navigation, route }) {
 
 
 
-  const tripData = {
-    userId: user._id,
-    motorId: selectedMotor._id,
-    distance: rideStats.distance,                  // planned or estimated distance
-    fuelUsedMin: 0,                                // optional, you can calculate
-    fuelUsedMax: rideStats.fuelConsumed,           // actual fuel used
-    timeArrived: new Date().toISOString(),         // arrival timestamp
-    eta: new Date().toISOString(), // example ETA
-    destination: "FREE RIDE",
 
-    actualDistance: rideStats.distance,
-    actualFuelUsedMin: 0,
-    actualFuelUsedMax: rideStats.fuelConsumed,
-    kmph: rideStats.avgSpeed,
-    rerouteCount: 0,
-    wasInBackground: false,
-    showAnalyticsModal: true,
-    analyticsNotes: "Smooth ride",
-    trafficCondition: "moderate",
-  };
 
 
 
   const stopTracking = useCallback(() => {
     // stop timers and subscriptions
-    api.recordTrip(tripData);
     setIsTracking(false);
     setScreenMode('summary');
 
@@ -720,48 +698,43 @@ export default function RouteSelectionScreen({ navigation, route }) {
             </TouchableOpacity> */}
 
 
-            {screenMode === "summary" && (
-              <Modal
-                transparent
-                animationType="fade"
-                visible={true}
-                onRequestClose={() => setScreenMode("planning")}
-              >
-                <View style={styles.modalOverlay}>
-                  <View style={styles.modalContent}>
-                    <Text style={styles.modalTitle}>Ride Summary</Text>
+{screenMode === "summary" && (
+  <Modal
+    transparent
+    animationType="fade"
+    visible={true}
+    onRequestClose={() => setScreenMode("planning")}
+  >
+    <View style={styles.modalOverlay}>
+      <View style={styles.modalContent}>
+        <Text style={styles.modalTitle}>Ride Summary</Text>
 
-                    <Text style={[styles.modalText, { fontSize: 20, marginBottom: 1 }]}>
-                      {selectedMotor.nickname}
-                    </Text>
-                    <Text style={[styles.modalText, { fontSize: 14, fontWeight: 400 }]}>
-                      {selectedMotor.name}
-                    </Text>
-                    <Text style={styles.modalText}>
-                      Duration: {(rideStats.duration / 60).toFixed(1)} min
-                    </Text>
-                    <Text style={styles.modalText}>
-                      You traveled for a total of: {rideStats.distance.toFixed(2)} km
-                    </Text>
-                    <Text style={styles.modalText}>
-                      Estimated Fuel Consumed: {rideStats.fuelConsumed.toFixed(2)} L
-                    </Text>
+        <Text>
+          Duration: {(rideStats.duration / 60).toFixed(1)} min
+        </Text>
+        
+        <Text style={styles.modalText}>
+          You traveled for a total of: {rideStats.distance.toFixed(2)} km
+        </Text>
+        <Text style={styles.modalText}>
+          Estimated Fuel Consumed: {rideStats.fuelConsumed.toFixed(2)} L
+        </Text>
 
-                    <View style={styles.buttonRow}>
-                      <TouchableOpacity
-                        style={styles.doneButton}
-                        onPress={() => {
-                          setScreenMode("planning");
-                          console.log("Saving ride stats:", rideStats, routeCoordinates);
-                        }}
-                      >
-                        <Text style={styles.doneButtonText}>Done</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              </Modal>
-            )}
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={styles.doneButton}
+            onPress={() => {
+              setScreenMode("planning");
+              console.log("Saving ride stats:", rideStats, routeCoordinates);
+            }}
+          >
+            <Text style={styles.doneButtonText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  </Modal>
+)}
 
             <CustomMapViewComponent
               mapRef={mapRef}
@@ -770,8 +743,8 @@ export default function RouteSelectionScreen({ navigation, route }) {
               currentLocation={currentLocation}
               reportMarkers={reportMarkers}
               gasStations={gasStations}
-              showReports={showReports}
-              showGasStations={showGasStations}
+              showReports={showReports && !isTracking}
+              showGasStations={showGasStations && !isTracking}
               routeCoordinates={routeCoordinates}
               isTracking={isTracking}
             />
@@ -880,6 +853,11 @@ export default function RouteSelectionScreen({ navigation, route }) {
                           },
                         ]}
                         onPress={() => { !isTracking ? startTracking() : stopTracking() }
+                          // navigation.navigate("MapScreenTry", {
+                          //   currentLocation,
+                          //   mapStyle,
+                          //   fromRoute: true,
+                          // })
 
                         }
                       >
@@ -1405,7 +1383,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 15,
-    textAlign: "left",
+    textAlign: "center",
   },
   motorItem: {
     paddingVertical: 12,
@@ -1448,17 +1426,17 @@ const styles = StyleSheet.create({
   //   elevation: 6,
   // },
   modalTitle: {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: "bold",
     marginBottom: 16,
     textAlign: "center",
     color: "#333",
   },
   modalText: {
-    justifyContent: "space-between",
-    textAlign: "justify",
-    alignContent: "space-between",
-    fontWeight: 700,
+    justifyContent:"space-between",
+    textAlign:"justify",
+    alignContent:"space-between",
+    fontWeight:700,
     fontSize: 16,
     color: "#444",
     marginBottom: 8,
@@ -1640,7 +1618,6 @@ const CustomMapViewComponent: React.FC<Props> = ({
 
       {/* Selected gas card — show only when selectedGas exists */}
       {selectedGas && (
-
         <View style={styles.infoBox}>
           <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
             <View style={{ maxWidth: "70%" }}>

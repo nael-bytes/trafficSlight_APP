@@ -13,7 +13,7 @@ import MapView, { Marker } from "react-native-maps";
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import DropDownPicker from "react-native-dropdown-picker";
 import axios from "axios";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import { GOOGLE_MAPS_API_KEY, LOCALHOST_IP } from "@env";
 import tw from "twrnc";
 import Ionicons from "react-native-vector-icons/Ionicons";

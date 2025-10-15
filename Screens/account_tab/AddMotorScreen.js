@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import { LOCALHOST_IP } from "@env";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import { LinearGradient } from 'expo-linear-gradient';
 
 

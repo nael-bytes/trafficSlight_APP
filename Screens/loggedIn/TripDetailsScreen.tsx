@@ -14,7 +14,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialIcons, Ionicons } from "@expo/vector-icons";
 import axios from "axios";
-import { useUser } from "../../AuthContext/UserContext";
+import { useUser } from "../../AuthContext/UserContextImproved";
 import { LinearGradient } from "expo-linear-gradient";
 
 const API_BASE = "https://ts-backend-1-jyit.onrender.com";
@@ -71,8 +71,9 @@ export default function TripScreen({ navigation }) {
         if (filter === "today") {
           return created.toDateString() === now.toDateString();
         } else if (filter === "week") {
-          const diff = (now - created) / (1000 * 60 * 60 * 24);
-          return diff <= 7;
+          const diffMs = now.getTime() - created.getTime();
+          const diffDays = diffMs / (1000 * 60 * 60 * 24);
+          return diffDays <= 7;
         } else if (filter === "month") {
           return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
         } else {
