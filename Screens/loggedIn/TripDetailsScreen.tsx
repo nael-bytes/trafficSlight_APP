@@ -19,6 +19,8 @@ import { LinearGradient } from "expo-linear-gradient";
 
 const API_BASE = "https://ts-backend-1-jyit.onrender.com";
 const CACHE_KEY = "cachedTrips";
+const CACHE_EXPIRY_KEY = "cachedTripsExpiry";
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 export default function TripScreen({ navigation }) {
   const { user } = useUser();
@@ -30,11 +32,12 @@ export default function TripScreen({ navigation }) {
     totalTime: 0,
     totalExpense: 0,
   });
-  const [filter, setFilter] = useState("month");
+  const [filter, setFilter] = useState("all");
   const [motors, setMotors] = useState([]);
   const [selectedMotor, setSelectedMotor] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [cacheStatus, setCacheStatus] = useState('loading');
 
   const calculateSummary = (tripsData) => {
     return {
@@ -46,53 +49,150 @@ export default function TripScreen({ navigation }) {
     };
   };
 
-  const fetchTrips = useCallback(async () => {
+  // Cache management functions
+  const isCacheValid = async () => {
     try {
-      setLoading(true);
+      const expiryTime = await AsyncStorage.getItem(CACHE_EXPIRY_KEY);
+      if (!expiryTime) return false;
+      
+      const now = Date.now();
+      const expiry = parseInt(expiryTime);
+      return now < expiry;
+    } catch (error) {
+      console.error('Error checking cache validity:', error);
+      return false;
+    }
+  };
 
-      // Load cached trips first
+  const saveToCache = async (tripsData) => {
+    try {
+      const expiryTime = Date.now() + CACHE_DURATION;
+      await Promise.all([
+        AsyncStorage.setItem(CACHE_KEY, JSON.stringify(tripsData)),
+        AsyncStorage.setItem(CACHE_EXPIRY_KEY, expiryTime.toString())
+      ]);
+      setCacheStatus('fresh');
+      console.log('[TripDetails] Data cached successfully, expires at:', new Date(expiryTime).toLocaleString());
+    } catch (error) {
+      console.error('Error saving to cache:', error);
+      setCacheStatus('error');
+    }
+  };
+
+  const loadFromCache = async () => {
+    try {
       const cached = await AsyncStorage.getItem(CACHE_KEY);
       if (cached) {
         const cachedData = JSON.parse(cached);
-        setTrips(cachedData);
-        setSummary(calculateSummary(cachedData));
+        setCacheStatus('cached');
+        console.log('[TripDetails] Loaded from cache:', cachedData.length, 'trips');
+        return cachedData;
+      }
+    } catch (error) {
+      console.error('Error loading from cache:', error);
+      setCacheStatus('error');
+    }
+    return null;
+  };
+
+  const clearCache = async () => {
+    try {
+      await Promise.all([
+        AsyncStorage.removeItem(CACHE_KEY),
+        AsyncStorage.removeItem(CACHE_EXPIRY_KEY)
+      ]);
+      setCacheStatus('cleared');
+      console.log('[TripDetails] Cache cleared');
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      setCacheStatus('error');
+    }
+  };
+
+  const fetchTrips = useCallback(async (forceRefresh = false) => {
+    try {
+      setLoading(true);
+
+      // Check if we have valid cached data and don't need to force refresh
+      if (!forceRefresh) {
+        const cacheValid = await isCacheValid();
+        if (cacheValid) {
+          const cachedData = await loadFromCache();
+          if (cachedData) {
+            // Apply current filters to cached data
+            const filtered = applyFilters(cachedData);
+            setTrips(filtered);
+            setSummary(calculateSummary(filtered));
+            console.log('[TripDetails] Using cached data');
+            setLoading(false);
+            setRefreshing(false);
+            return;
+          }
+        }
       }
 
-      // Fetch from API
+      // Load cached data immediately for better UX (even if expired)
+      const cachedData = await loadFromCache();
+      if (cachedData && !forceRefresh) {
+        const filtered = applyFilters(cachedData);
+        setTrips(filtered);
+        setSummary(calculateSummary(filtered));
+        console.log('[TripDetails] Using expired cache while fetching fresh data');
+      }
+
+      // Fetch fresh data from API
+      console.log('[TripDetails] Fetching fresh data from API...');
       const res = await axios.get(`${API_BASE}/api/trips/user/${user._id}`);
       let data = res.data;
 
-      // Filter based on motor & time
-      const now = new Date();
-      const filtered = data.filter((trip) => {
-        const created = new Date(trip.createdAt);
-        if (selectedMotor && trip.motorId?._id !== selectedMotor) return false;
-
-        if (filter === "today") {
-          return created.toDateString() === now.toDateString();
-        } else if (filter === "week") {
-          const diffMs = now.getTime() - created.getTime();
-          const diffDays = diffMs / (1000 * 60 * 60 * 24);
-          return diffDays <= 7;
-        } else if (filter === "month") {
-          return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
-        } else {
-          return created.getFullYear() === now.getFullYear();
-        }
-      });
-
+      // Apply filters to fresh data
+      const filtered = applyFilters(data);
       setTrips(filtered);
       setSummary(calculateSummary(filtered));
 
-      // Cache trips
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(filtered));
+      // Save fresh data to cache
+      await saveToCache(data);
+      console.log('[TripDetails] Fresh data fetched and cached');
+
     } catch (err) {
       console.error("Trip fetch error:", err);
+      
+      // If API fails, try to use cached data as fallback
+      const cachedData = await loadFromCache();
+      if (cachedData) {
+        const filtered = applyFilters(cachedData);
+        setTrips(filtered);
+        setSummary(calculateSummary(filtered));
+        console.log('[TripDetails] API failed, using cached data as fallback');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [filter, selectedMotor]);
+
+  // Helper function to apply filters
+  const applyFilters = (data) => {
+    const now = new Date();
+    return data.filter((trip) => {
+      const created = new Date(trip.createdAt);
+      if (selectedMotor && trip.motorId?._id !== selectedMotor) return false;
+
+      if (filter === "all") {
+        return true; // Show all trips regardless of time
+      } else if (filter === "today") {
+        return created.toDateString() === now.toDateString();
+      } else if (filter === "week") {
+        const diffMs = now.getTime() - created.getTime();
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+        return diffDays <= 7;
+      } else if (filter === "month") {
+        return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
+      } else {
+        return created.getFullYear() === now.getFullYear();
+      }
+    });
+  };
 
   useEffect(() => {
     fetchTrips();
@@ -110,42 +210,126 @@ export default function TripScreen({ navigation }) {
     return hr > 0 ? `${hr}h ${rem}m` : `${rem} min`;
   };
 
-  const TripCard = ({ trip }) => (
-    <View style={styles.tripCard}>
-      <View style={styles.tripHeader}>
-        <MaterialIcons name="two-wheeler" size={20} color="#00ADB5" />
-        <Text style={styles.tripTitle}>{trip.motorId?.nickname || trip.motorId?.model || "Motor"}</Text>
-      </View>
+  // Cache status helper functions
+  const getCacheStatusColor = () => {
+    switch (cacheStatus) {
+      case 'fresh': return '#4CAF50'; // Green
+      case 'cached': return '#FF9800'; // Orange
+      case 'loading': return '#2196F3'; // Blue
+      case 'error': return '#F44336'; // Red
+      case 'cleared': return '#9E9E9E'; // Gray
+      default: return '#9E9E9E';
+    }
+  };
 
-      <View style={styles.tripRow}>
-        <Ionicons name="map-outline" size={20} color="#666" />
-        <Text style={styles.tripText}>
-          {trip.distance.toFixed(1)} km
-        </Text>
-      </View>
+  const getCacheStatusText = () => {
+    switch (cacheStatus) {
+      case 'fresh': return 'Fresh data';
+      case 'cached': return 'Cached data';
+      case 'loading': return 'Loading...';
+      case 'error': return 'Cache error';
+      case 'cleared': return 'Cache cleared';
+      default: return 'Unknown';
+    }
+  };
 
-      <View style={styles.tripRow}>
-        <Ionicons name="time-outline" size={20} color="#666" />
-        <Text style={styles.tripText}>
-          ETA: { trip.eta || "N/A"} / Arrived: {trip.timeArrived || "N/A"}
-        </Text>
-      </View>
+  const TripCard = ({ trip }) => {
+    // Format the trip date and time
+    const formatTripDateTime = (trip) => {
+      try {
+        // Try to use tripStartTime first, then createdAt as fallback
+        const dateTime = trip.tripStartTime || trip.createdAt;
+        if (!dateTime) return "Date not available";
+        
+        const tripDate = new Date(dateTime);
+        const now = new Date();
+        const diffMs = now.getTime() - tripDate.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        
+        // Format date
+        const dateStr = tripDate.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: tripDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+        });
+        
+        // Format time
+        const timeStr = tripDate.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+        
+        // Add relative time
+        let relativeTime = "";
+        if (diffDays === 0) {
+          relativeTime = " (Today)";
+        } else if (diffDays === 1) {
+          relativeTime = " (Yesterday)";
+        } else if (diffDays < 7) {
+          relativeTime = ` (${diffDays} days ago)`;
+        } else if (diffDays < 30) {
+          const weeks = Math.floor(diffDays / 7);
+          relativeTime = ` (${weeks} week${weeks > 1 ? 's' : ''} ago)`;
+        } else if (diffDays < 365) {
+          const months = Math.floor(diffDays / 30);
+          relativeTime = ` (${months} month${months > 1 ? 's' : ''} ago)`;
+        } else {
+          const years = Math.floor(diffDays / 365);
+          relativeTime = ` (${years} year${years > 1 ? 's' : ''} ago)`;
+        }
+        
+        return `${dateStr} at ${timeStr}${relativeTime}`;
+      } catch (error) {
+        console.error('Error formatting trip date:', error);
+        return "Date not available";
+      }
+    };
 
-      <View style={styles.tripRow}>
-        <Ionicons name="timer-outline" size={20} color="#666" />
-        <Text style={styles.tripText}>
-          Duration: {trip.duration ? `${trip.duration} min` : "N/A"}
-        </Text>
-      </View>
+    return (
+      <View style={styles.tripCard}>
+        <View style={styles.tripHeader}>
+          <MaterialIcons name="two-wheeler" size={20} color="#00ADB5" />
+          <Text style={styles.tripTitle}>{trip.motorId?.nickname || trip.motorId?.model || "Motor"}</Text>
+        </View>
 
-      <View style={styles.tripRow}>
-        <Ionicons name="location-outline" size={20} color="#666" />
-        <Text style={styles.tripText}>
-          {trip.destination}
-        </Text>
+        <View style={styles.tripRow}>
+          <Ionicons name="calendar-outline" size={20} color="#666" />
+          <Text style={styles.tripText}>
+            {formatTripDateTime(trip)}
+          </Text>
+        </View>
+
+        <View style={styles.tripRow}>
+          <Ionicons name="map-outline" size={20} color="#666" />
+          <Text style={styles.tripText}>
+            {trip.distance?.toFixed(1) || "0.0"} km
+          </Text>
+        </View>
+
+        <View style={styles.tripRow}>
+          <Ionicons name="time-outline" size={20} color="#666" />
+          <Text style={styles.tripText}>
+            ETA: {trip.eta || "N/A"} / Arrived: {trip.timeArrived || "N/A"}
+          </Text>
+        </View>
+
+        <View style={styles.tripRow}>
+          <Ionicons name="timer-outline" size={20} color="#666" />
+          <Text style={styles.tripText}>
+            Duration: {trip.duration ? `${trip.duration} min` : "N/A"}
+          </Text>
+        </View>
+
+        <View style={styles.tripRow}>
+          <Ionicons name="location-outline" size={20} color="#666" />
+          <Text style={styles.tripText}>
+            {trip.destination || "No destination"}
+          </Text>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#00ADB5" />
@@ -168,6 +352,10 @@ export default function TripScreen({ navigation }) {
             <View style={styles.headerTextContainer}>
               <Text style={styles.headerTitle}>Trip Details</Text>
               <Text style={styles.headerSubtitle}>View your travel history</Text>
+              <View style={styles.cacheStatusContainer}>
+                <View style={[styles.cacheIndicator, { backgroundColor: getCacheStatusColor() }]} />
+                <Text style={styles.cacheStatusText}>{getCacheStatusText()}</Text>
+              </View>
             </View>
           </View>
         </LinearGradient>
@@ -180,7 +368,7 @@ export default function TripScreen({ navigation }) {
             refreshing={refreshing} 
             onRefresh={() => {
               setRefreshing(true);
-              fetchTrips();
+              fetchTrips(true); // Force refresh when pulled down
             }}
             colors={['#00ADB5']}
             tintColor="#00ADB5"
@@ -201,12 +389,12 @@ export default function TripScreen({ navigation }) {
               <Text style={styles.summaryValue}>{summary.totalDistance.toFixed(1)}</Text>
               <Text style={styles.summaryLabel}>Total KM</Text>
             </View>
-            <View style={styles.summaryBox}>
+            {/* <View style={styles.summaryBox}>
               <Ionicons name="water-outline" size={24} color="#00ADB5" />
               <Text style={styles.summaryValue}>{summary.totalFuel.toFixed(1)}</Text>
               <Text style={styles.summaryLabel}>Fuel (L)</Text>
-            </View>
-          </View>
+            </View> */}
+          {/* </View>
           <View style={styles.summaryRow}>
             <View style={[styles.summaryBox, styles.summaryBoxWide]}>
               <Ionicons name="time-outline" size={24} color="#00ADB5" />
@@ -217,7 +405,7 @@ export default function TripScreen({ navigation }) {
               <Ionicons name="cash-outline" size={24} color="#00ADB5" />
               <Text style={styles.summaryValue}>₱{summary.totalExpense.toFixed(2)}</Text>
               <Text style={styles.summaryLabel}>Total Cost</Text>
-            </View>
+            </View> */}
           </View>
         </View>
 
@@ -225,14 +413,14 @@ export default function TripScreen({ navigation }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Filter by Time</Text>
           <View style={styles.filterRow}>
-            {["today", "week", "month", "year"].map((f) => (
+            {["all", "today", "week", "month", "year"].map((f) => (
               <TouchableOpacity
                 key={f}
                 style={[styles.filterBtn, filter === f && styles.filterActive]}
                 onPress={() => setFilter(f)}
               >
                 <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-                  {f === "today" ? "Today" : f === "week" ? "Last 7d" : f === "month" ? "This Month" : "This Year"}
+                  {f === "all" ? "All Time" : f === "today" ? "Today" : f === "week" ? "Last 7d" : f === "month" ? "This Month" : "This Year"}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -492,5 +680,21 @@ const styles = StyleSheet.create({
   },
   backButton: {
     marginRight: 16,
+  },
+  cacheStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  cacheIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  cacheStatusText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontWeight: '500',
   },
 });

@@ -7,9 +7,10 @@ import type { RideStats } from '../types';
 interface TrackingStatsProps {
   rideStats: RideStats;
   isVisible: boolean;
+  selectedMotor?: any;
 }
 
-export const TrackingStats: React.FC<TrackingStatsProps> = ({ rideStats, isVisible }) => {
+export const TrackingStats: React.FC<TrackingStatsProps> = ({ rideStats, isVisible, selectedMotor }) => {
   if (!isVisible) return null;
 
   const formatTime = (seconds: number): string => {
@@ -29,14 +30,14 @@ export const TrackingStats: React.FC<TrackingStatsProps> = ({ rideStats, isVisib
           <Text style={styles.statLabel}>Distance</Text>
           <Text style={styles.statValue}>{rideStats.distance.toFixed(2)} km</Text>
         </View>
-        {/* <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Avg Speed</Text>
-          <Text style={styles.statValue}>{rideStats.speed.toFixed(1)} km/h</Text>
-        </View> */}
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Fuel Used</Text>
-          <Text style={styles.statValue}>{rideStats.fuelConsumed.toFixed(2)} L</Text>
-        </View>
+        {selectedMotor && (
+          <View style={[styles.statItem, styles.fuelItem]}>
+            <Text style={styles.statLabel}>Fuel Level</Text>
+            <Text style={[styles.statValue, styles.fuelValue]}>
+              {selectedMotor.currentFuelLevel?.toFixed(0) || 0}%
+            </Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -75,5 +76,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
+  },
+  fuelItem: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 2,
+    borderColor: '#FF9800',
+  },
+  fuelValue: {
+    color: '#FF5722',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });

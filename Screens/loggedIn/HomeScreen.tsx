@@ -41,18 +41,18 @@ const renderItemLabel = (item: any, type: string) => {
   switch (type) {
     case "Motors":
       return {
-        line1: item.name || "Motorcycle",
-        line2: item.fuelEfficiency ? `${item.fuelEfficiency} km/L` : "Fuel Efficiency Unknown",
-        line3: item.nickname || item.plateNumber || "Nickname Unknown",
+        line1: item.nickname || item.motorcycleData?.name || "Motorcycle",
+        line2: item.fuelEfficiency || item.fuelConsumption ? `${item.fuelEfficiency || item.fuelConsumption} km/L` : "Fuel Efficiency Unknown",
+        line3: `Fuel: ${item.currentFuelLevel?.toFixed(0) || 0}% • ${item.motorcycleData?.name || "Unknown Model"}`,
       };
     case "Trips":
       const maintenanceText = item.maintenanceActions?.length
         ? `${item.maintenanceActions.length} maintenance action${item.maintenanceActions.length > 1 ? "s" : ""}`
         : "No maintenance";
       return {
-        line1: `${item.startAddress || "Start"} → ${item.destination || "End"}`,
-        line2: `Distance: ${item.distance?.toFixed(1) ?? "--"} km • ${maintenanceText}`,
-        line3: `ETA: ${item.eta ?? "--"}`,
+        line1: `${item.startLocation?.address || "Start"} → ${item.destination || "End"}`,
+        line2: `Distance: ${item.actualDistance?.toFixed(1) ?? item.distance?.toFixed(1) ?? "--"} km • ${maintenanceText}`,
+        line3: `Duration: ${item.duration ?? "--"} min • Status: ${item.status ?? "--"}`,
       };
     case "Maintenance":
       const actionType = (item.type || "").replace("_", " ");
@@ -67,8 +67,10 @@ const renderItemLabel = (item: any, type: string) => {
       };
     case "Fuel Logs":
       const fuelLocation = item.location?.address ? ` at ${item.location.address}` : "";
+      const isMaintenance = item.source === 'maintenance';
+      const sourceIndicator = isMaintenance ? " (Maintenance)" : "";
       return {
-        line1: `₱${(item.totalCost ?? "--").toFixed?.() ?? (typeof item.cost === "number" ? item.cost.toFixed(2) : "--")}`,
+        line1: `₱${(item.totalCost ?? "--").toFixed?.() ?? (typeof item.cost === "number" ? item.cost.toFixed(2) : "--")}${sourceIndicator}`,
         line2: `${item.liters?.toFixed(1) ?? "--"} Liters${fuelLocation}`,
         line3: item.date ? new Date(item.date).toLocaleString("en-PH", {
           hour: "2-digit", minute: "2-digit", hour12: true, month: "long", day: "numeric"
@@ -89,11 +91,15 @@ const renderItemLabel = (item: any, type: string) => {
   }
 };
 
-const getImageForSection = (title: string, description?: string) => {
+const getImageForSection = (title: string, description?: string, item?: any) => {
   switch (title) {
     case "Motors":
       return require("../../assets/icons/motor-silhouette.png");
     case "Fuel Logs":
+      // Use maintenance icon for maintenance refuels, gas station for regular fuel logs
+      if (item?.source === 'maintenance') {
+        return require("../../assets/icons/maintenance.png");
+      }
       return require("../../assets/icons/gas_station-71.png");
     case "Maintenance":
       switch (description?.toLowerCase()) {
@@ -151,10 +157,24 @@ const Section = ({
         <View style={styles.headerActions}>
           {(showSeeAll || data.length > 2) && (
             <TouchableOpacity
-              onPress={title === "Motors" ? onAdd : () => navTarget && navigation.navigate(navTarget, { fullList: data })}
+              onPress={() => {
+                if (navTarget === "MotorDetails") {
+                  navigation.navigate("AddMotorScreen");
+                } else if (navTarget) {
+                  navigation.navigate(navTarget, { fullList: data });
+                }
+              }}
               style={styles.seeAllButton}
             >
               <Text style={styles.seeAll}>See All</Text>
+            </TouchableOpacity>
+          )}
+          {onAdd && (
+            <TouchableOpacity
+              onPress={onAdd}
+              style={[styles.seeAllButton, { backgroundColor: "rgba(0, 173, 181, 0.2)" }]}
+            >
+              <Text style={[styles.seeAll, { color: "#00ADB5" }]}>Add</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -168,21 +188,52 @@ const Section = ({
           data={data.slice(0, 5)}
           keyExtractor={(item: any, index: number) => item._id || index.toString()}
           renderItem={({ item }) => {
-            const label = renderItemLabel(item, title);
-            return (
-              <TouchableOpacity
-                style={[styles.item, isDarkMode && styles.itemDark]}
-                onPress={() => navTarget && navigation.navigate(navTarget as any, { item })}
-              >
-                <Image
-                  source={getImageForSection(title, (item as any).type || (item as any).details?.type)}
-                  style={[styles.itemImage, isDarkMode && styles.itemImageDark]}
-                />
-                <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>{label.line1}</Text>
-                {label.line2 ? <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>{label.line2}</Text> : null}
-                {label.line3 ? <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>{label.line3}</Text> : null}
-              </TouchableOpacity>
-            );
+            try {
+              const label = renderItemLabel(item, title);
+              console.log(`[HomeScreen] Rendering ${title} item:`, {
+                itemKeys: Object.keys(item),
+                label,
+                hasImage: !!getImageForSection(title, (item as any).type || (item as any).details?.type)
+              });
+              
+              return (
+                <TouchableOpacity
+                  style={[styles.item, isDarkMode && styles.itemDark]}
+                  onPress={() => {
+                    if (navTarget) {
+                      // For maintenance items, pass the item for detailed view
+                      if (title === "Maintenance") {
+                        navigation.navigate(navTarget as any, { 
+                          item, 
+                          showSingleItem: true 
+                        });
+                      } else {
+                        // For other sections, pass the item normally
+                        navigation.navigate(navTarget as any, { item });
+                      }
+                    }
+                  }}
+                >
+                  <Image
+                    source={getImageForSection(title, (item as any).type || (item as any).details?.type, item)}
+                    style={[styles.itemImage, isDarkMode && styles.itemImageDark]}
+                    onError={(error) => {
+                      console.warn(`[HomeScreen] Image load error for ${title}:`, error);
+                    }}
+                  />
+                  <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>{label.line1}</Text>
+                  {label.line2 ? <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>{label.line2}</Text> : null}
+                  {label.line3 ? <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>{label.line3}</Text> : null}
+                </TouchableOpacity>
+              );
+            } catch (error) {
+              console.error(`[HomeScreen] Error rendering ${title} item:`, error, item);
+              return (
+                <View style={[styles.item, isDarkMode && styles.itemDark]}>
+                  <Text style={[styles.itemText, isDarkMode && styles.itemTextDark]}>Error loading item</Text>
+                </View>
+              );
+            }
           }}
           showsHorizontalScrollIndicator={false}
         />
@@ -207,9 +258,43 @@ export default function MotorPage() {
   const [fuelLogs, setFuelLogs] = useState<any[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<any[]>([]);
   const [gasStations, setGasStations] = useState<any[]>([]);
+  const [combinedFuelData, setCombinedFuelData] = useState<any[]>([]);
   const navigation = useNavigation<any>();
   const { user } = useUser();
-  
+
+  // Function to combine fuel logs with maintenance refuels only
+  const combineFuelData = (fuelLogs: any[], maintenanceRecords: any[]) => {
+    // Filter maintenance records for refuel type only
+    const maintenanceRefuels = maintenanceRecords.filter((record: any) => record.type === 'refuel');
+    
+    // Transform maintenance refuels to match fuel log format
+    const transformedMaintenanceRefuels = maintenanceRefuels.map((record: any) => ({
+      _id: `maintenance_${record._id}`,
+      date: record.timestamp,
+      liters: record.details.quantity,
+      pricePerLiter: record.details.cost / record.details.quantity,
+      totalCost: record.details.cost,
+      odometer: undefined, // Maintenance records don't have odometer
+      notes: record.details.notes,
+      motorId: {
+        _id: record.motorId._id,
+        nickname: record.motorId.nickname,
+        motorcycleId: undefined
+      },
+      location: record.location ? `${record.location.latitude}, ${record.location.longitude}` : undefined,
+      source: 'maintenance'
+    }));
+
+    // Combine both data sources
+    const combined = [
+      ...fuelLogs.map((log: any) => ({ ...log, source: 'fuel_log' })), 
+      ...transformedMaintenanceRefuels
+    ];
+    
+    // Sort by date (newest first)
+    return combined.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  };
+
   // load cached
   useEffect(() => {
     if (!user || !user._id) return;
@@ -235,17 +320,31 @@ export default function MotorPage() {
         if (cachedMotors) setMotors(JSON.parse(cachedMotors));
         if (cachedTrips)
           setTrips(JSON.parse(cachedTrips).sort(
-            (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+            (a: any, b: any) => new Date(b.tripStartTime || b.date || 0).getTime() - new Date(a.tripStartTime || a.date || 0).getTime()
           ));
         if (cachedDestinations) setDestinations(JSON.parse(cachedDestinations));
-        if (cachedFuelLogs)
-          setFuelLogs(JSON.parse(cachedFuelLogs).sort(
+        
+        let fuelLogsData = [];
+        let maintenanceData = [];
+        
+        if (cachedFuelLogs) {
+          fuelLogsData = JSON.parse(cachedFuelLogs).sort(
             (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-          ));
-        if (cachedMaintenance)
-          setMaintenanceRecords(JSON.parse(cachedMaintenance).sort(
+          );
+          setFuelLogs(fuelLogsData);
+        }
+        
+        if (cachedMaintenance) {
+          maintenanceData = JSON.parse(cachedMaintenance).sort(
             (a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
-          ));
+          );
+          setMaintenanceRecords(maintenanceData);
+        }
+        
+        // Combine fuel logs with maintenance refuels only
+        const combined = combineFuelData(fuelLogsData, maintenanceData);
+        setCombinedFuelData(combined);
+        
         if (cachedGas) setGasStations(JSON.parse(cachedGas));
   
         console.log("✅ Cached data restored for user:", user._id);
@@ -279,11 +378,20 @@ export default function MotorPage() {
           axios.get(`${API_BASE}/api/gas-stations`).catch(() => ({ data: [] })),
         ]);
     
-      // 🔹 Update state
+      // 🔹 Update state with logging
+      console.log('[HomeScreen] Fetched data:', {
+        motors: motorsRes.data?.length || 0,
+        trips: tripsRes.data?.length || 0,
+        destinations: destinationsRes.data?.length || 0,
+        fuelLogs: logsRes.data?.length || 0,
+        maintenance: maintenanceRes.data?.length || 0,
+        gasStations: gasRes.data?.length || 0
+      });
+
       setMotors(motorsRes.data || []);
       setTrips(
         (tripsRes.data || []).sort(
-          (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+          (a: any, b: any) => new Date(b.tripStartTime || b.date || 0).getTime() - new Date(a.tripStartTime || a.date || 0).getTime()
         )
       );
       setDestinations(destinationsRes.data || []);
@@ -292,12 +400,15 @@ export default function MotorPage() {
           (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
         )
       );
-      setMaintenanceRecords(
-        (maintenanceRes.data || []).sort(
-          (a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
-        )
+      const maintenanceData = (maintenanceRes.data || []).sort(
+        (a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
       );
+      setMaintenanceRecords(maintenanceData);
       setGasStations(gasRes.data || []);
+
+      // Combine fuel logs with maintenance refuels only
+      const combined = combineFuelData(logsRes.data || [], maintenanceData);
+      setCombinedFuelData(combined);
     
       // 🔹 Cache everything
       await AsyncStorage.multiSet([
@@ -343,8 +454,8 @@ export default function MotorPage() {
     {
       title: "Fuel Logs",
       subtitle: "Refueling Activity",
-      text: "Track fuel usage and costs.",
-      data: fuelLogs,
+      text: "Track fuel usage and costs (includes maintenance refuels).",
+      data: combinedFuelData,
       navTarget: "FuelLogDetails",
       onAdd: () => navigation.navigate("AddFuelLogScreen"),
       showSeeAll: true,
@@ -355,6 +466,7 @@ export default function MotorPage() {
       text: "Track your motorcycle maintenance.",
       data: maintenanceRecords,
       navTarget: "MaintenanceDetails",
+      onAdd: () => navigation.navigate("AddMaintenanceScreen"), // Fixed: Added onAdd function
       showSeeAll: true,
     },
   ];
@@ -392,7 +504,7 @@ export default function MotorPage() {
           ListFooterComponent={
             <TouchableOpacity style={styles.calcBtn} onPress={() => navigation.navigate?.("FuelCalculator")}>
               <LinearGradient colors={isDarkMode ? ["#00858B", "#006A6F"] : ["#00ADB5", "#00C2CC"]} style={styles.calcBtnGradient}>
-                <Text style={styles.calcBtnText}>Go to Fuel Calculator</Text>
+                <Text style={styles.calcBtnText}>Update Fuel Efficiency</Text>
               </LinearGradient>
             </TouchableOpacity>
           }

@@ -22,6 +22,7 @@ interface TripSummaryModalProps {
   selectedMotor?: any;
   startAddress?: string;
   endAddress?: string;
+  tripMaintenanceActions?: any[];
 }
 
 export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
@@ -33,6 +34,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
   selectedMotor,
   startAddress,
   endAddress,
+  tripMaintenanceActions = [],
 }) => {
   const formatTime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -67,7 +69,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
       onRequestClose={onClose}
     >
       <View style={[styles.summaryModalContainer, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-        <View style={[styles.summaryModal, { margin: 20 }]}>
+        <View style={[styles.summaryModal, { margin: 10 }]}>
           <LinearGradient
             colors={['#00ADB5', '#00858B']}
             start={{ x: 0, y: 0 }}
@@ -108,20 +110,6 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
               </View>
             </View>
 
-            {/* Fuel Analytics */}
-            <View style={styles.summarySection}>
-              <Text style={styles.sectionTitle}>Fuel Analytics</Text>
-
-              <View style={styles.summaryRow}>
-                <MaterialIcons name="local-gas-station" size={20} color="#2ecc71" />
-                <View style={styles.analyticsCompare}>
-                  <Text style={styles.analyticsLabel}>Fuel Consumed:</Text>
-                  <Text style={styles.analyticsValue}>{rideStats.fuelConsumed.toFixed(2)} L</Text>
-                  <Text style={styles.analyticsLabel}>Efficiency:</Text>
-                  <Text style={styles.analyticsValue}>{selectedMotor?.fuelEfficiency || "--"} km/L</Text>
-                </View>
-              </View>
-            </View>
 
             {/* Time Analytics */}
             <View style={styles.summarySection}>
@@ -151,9 +139,36 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
                     <Text style={styles.analyticsLabel}>Current Fuel Level:</Text>
                     <Text style={styles.analyticsValue}>{Math.round(selectedMotor.currentFuelLevel) || "--"}%</Text>
                     <Text style={styles.analyticsLabel}>Total Distance Traveled:</Text>
-                    <Text style={styles.analyticsValue}>{selectedMotor.analytics?.totalDistance?.toFixed(2) || "--"} km</Text>
+                    <Text style={styles.analyticsValue}>{(selectedMotor.analytics?.totalDistance + rideStats.distance)?.toFixed(2) || "--"} km</Text>
                   </View>
                 </View>
+              </View>
+            )}
+
+            {/* Maintenance Actions During Trip */}
+            {tripMaintenanceActions.length > 0 && (
+              <View style={styles.summarySection}>
+                <Text style={styles.sectionTitle}>Maintenance During Trip</Text>
+                
+                {tripMaintenanceActions.map((action, index) => (
+                  <View key={index} style={styles.maintenanceRow}>
+                    <MaterialIcons 
+                      name={action.type === 'refuel' ? 'local-gas-station' : action.type === 'oil_change' ? 'opacity' : 'build'} 
+                      size={20} 
+                      color="#FF9800" 
+                    />
+                    <View style={styles.maintenanceDetails}>
+                      <Text style={styles.maintenanceType}>
+                        {action.type.replace('_', ' ').toUpperCase()}
+                      </Text>
+                      <Text style={styles.maintenanceInfo}>
+                        Cost: ₱{action.cost} 
+                        {action.quantity && ` • Quantity: ${action.quantity.toFixed(2)}L`}
+                        {action.notes && ` • Notes: ${action.notes}`}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
               </View>
             )}
           </ScrollView>
@@ -199,7 +214,7 @@ const styles = StyleSheet.create({
   // Summary Modal Styles
   summaryModalContainer: {
     flex: 1,
-    bottom: 0,
+    bottom: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -304,5 +319,32 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  
+  // Maintenance styles
+  maintenanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF8E1',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#FF9800',
+  },
+  maintenanceDetails: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  maintenanceType: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FF9800',
+    textTransform: 'uppercase',
+  },
+  maintenanceInfo: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
   },
 });

@@ -51,12 +51,18 @@ export const MapComponent: React.FC<MapComponentProps> = ({
   region,
   mapStyle,
   currentLocation,
+  destination,
+  userId,
   reportMarkers,
   gasStations,
   showReports,
   showGasStations,
   routeCoordinates,
+  snappedRouteCoordinates,
   isTracking,
+  onReportVoted,
+  onMapPress,
+  selectedMapLocation,
 }) => {
   const [state, setState] = useState<MapComponentState>({
     selectedReport: null,
@@ -81,7 +87,11 @@ export const MapComponent: React.FC<MapComponentProps> = ({
 
   const handleVote = useCallback(async (reportId: string, userId: string, vote: number) => {
     try {
+      console.log('[MapComponent] Voting on report:', { reportId, userId, vote });
       const response = await voteOnReport(reportId, userId, vote);
+      
+      console.log('[MapComponent] Vote successful:', response);
+      
       setState(prev => ({
         ...prev,
         selectedReport: prev.selectedReport ? {
@@ -89,10 +99,16 @@ export const MapComponent: React.FC<MapComponentProps> = ({
           ...response
         } : null,
       }));
+      
+      // Trigger refresh of reports data in parent component
+      if (onReportVoted) {
+        onReportVoted();
+      }
     } catch (error) {
-      console.error('Vote failed:', error);
+      console.error('[MapComponent] Vote failed:', error);
+      // You could add a toast notification here if needed
     }
-  }, []);
+  }, [onReportVoted]);
 
   const closeSelection = useCallback(() => {
     setState({
@@ -122,13 +138,48 @@ export const MapComponent: React.FC<MapComponentProps> = ({
         followsUserLocation={isTracking}
         showsCompass={true}
         provider={PROVIDER_GOOGLE}
+        onPress={onMapPress}
       >
-        {/* Current location marker */}
+        {/* Current location marker - use snapped coordinates if available */}
         {currentLocation && validateCoordinates(currentLocation) && (
-          <Marker coordinate={currentLocation} title="Your Location">
+          <Marker 
+            coordinate={snappedRouteCoordinates && snappedRouteCoordinates.length > 0 
+              ? snappedRouteCoordinates[snappedRouteCoordinates.length - 1] 
+              : currentLocation
+            } 
+            title="Your Location"
+          >
             <Image 
               source={require('../assets/icons/User-onTrack-MARKER.png')} 
               style={styles.userMarker} 
+            />
+          </Marker>
+        )}
+
+        {/* Destination marker */}
+        {destination && validateCoordinates(destination) && (
+          <Marker 
+            coordinate={destination} 
+            title="Destination"
+            description={destination.address || "Your destination"}
+          >
+            <Image 
+              source={require('../assets/icons/DESTINATION MARKER.png')} 
+              style={styles.destinationMarker} 
+            />
+          </Marker>
+        )}
+
+        {/* Selected map location marker */}
+        {selectedMapLocation && validateCoordinates(selectedMapLocation) && (
+          <Marker 
+            coordinate={selectedMapLocation} 
+            title="Selected Location"
+            description={selectedMapLocation.address || "Tap to confirm this location"}
+          >
+            <Image 
+              source={require('../assets/icons/DESTINATION MARKER.png')} 
+              style={styles.destinationMarker} 
             />
           </Marker>
         )}
@@ -167,14 +218,28 @@ export const MapComponent: React.FC<MapComponentProps> = ({
           );
         })}
 
-        {/* Route polyline */}
-        {isTracking && routeCoordinates && routeCoordinates.length > 1 && (
+        {/* Route polyline - Show when route is selected, not just when tracking */}
+        {/* Road-snapped polyline (preferred) - More vibrant color */}
+        {snappedRouteCoordinates && snappedRouteCoordinates.length > 1 && (
           <Polyline
-            coordinates={routeCoordinates}
-            strokeColor="#FF0000"
-            strokeWidth={4}
+            coordinates={snappedRouteCoordinates}
+            strokeColor={isTracking ? "#00ADB5" : "#FF6B35"}
+            strokeWidth={isTracking ? 6 : 5}
             lineCap="round"
             lineJoin="round"
+            lineDashPattern={isTracking ? undefined : [10, 5]}
+          />
+        )}
+        
+        {/* Fallback to original coordinates if no snapped coordinates */}
+        {(!snappedRouteCoordinates || snappedRouteCoordinates.length <= 1) && routeCoordinates && routeCoordinates.length > 1 && (
+          <Polyline
+            coordinates={routeCoordinates}
+            strokeColor={isTracking ? "#FF0000" : "#FF6B35"}
+            strokeWidth={isTracking ? 5 : 4}
+            lineCap="round"
+            lineJoin="round"
+            lineDashPattern={isTracking ? undefined : [10, 5]}
           />
         )}
       </MapView>
@@ -185,6 +250,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({
           report={state.selectedReport} 
           onClose={closeSelection}
           onVote={handleVote}
+          userId={userId}
         />
       )}
 
@@ -204,10 +270,19 @@ interface ReportCardProps {
   report: TrafficReport;
   onClose: () => void;
   onVote: (reportId: string, userId: string, vote: number) => void;
+  userId?: string;
 }
 
-const ReportCard: React.FC<ReportCardProps> = ({ report, onClose, onVote }) => {
+const ReportCard: React.FC<ReportCardProps> = ({ report, onClose, onVote, userId }) => {
   const totalVotes = report.votes?.reduce((sum, vote) => sum + vote.vote, 0) || 0;
+
+  const handleVote = (vote: number) => {
+    if (!userId) {
+      console.warn('[ReportCard] No userId provided, cannot vote');
+      return;
+    }
+    onVote(report._id, userId, vote);
+  };
 
   return (
     <View style={styles.infoBox}>
@@ -226,8 +301,9 @@ const ReportCard: React.FC<ReportCardProps> = ({ report, onClose, onVote }) => {
 
       <View style={styles.voteSection}>
         <TouchableOpacity 
-          style={styles.voteButton}
-          onPress={() => onVote(report._id, 'current-user-id', 1)}
+          style={userId ? styles.voteButton : styles.voteButtonDisabled}
+          onPress={() => handleVote(1)}
+          disabled={!userId}
         >
           <Text style={styles.voteButtonText}>👍</Text>
         </TouchableOpacity>
@@ -235,12 +311,19 @@ const ReportCard: React.FC<ReportCardProps> = ({ report, onClose, onVote }) => {
         <Text style={styles.voteCount}>{totalVotes}</Text>
 
         <TouchableOpacity 
-          style={styles.voteButton}
-          onPress={() => onVote(report._id, 'current-user-id', -1)}
+          style={userId ? styles.voteButton : styles.voteButtonDisabled}
+          onPress={() => handleVote(-1)}
+          disabled={!userId}
         >
           <Text style={styles.voteButtonText}>👎</Text>
         </TouchableOpacity>
       </View>
+
+      {!userId && (
+        <Text style={styles.voteDisabledText}>
+          Please log in to vote on reports
+        </Text>
+      )}
 
       <TouchableOpacity style={styles.closeButton} onPress={onClose}>
         <Text style={styles.closeButtonText}>Close</Text>
@@ -303,6 +386,11 @@ const styles = StyleSheet.create({
     height: 40,
     resizeMode: 'contain',
   },
+  destinationMarker: {
+    width: 45,
+    height: 45,
+    resizeMode: 'contain',
+  },
   iconMarker: {
     width: 35,
     height: 35,
@@ -310,7 +398,7 @@ const styles = StyleSheet.create({
   },
   infoBox: {
     position: 'absolute',
-    bottom: 20,
+    bottom: 120,
     left: 16,
     right: 16,
     backgroundColor: '#fff',
@@ -360,6 +448,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     marginHorizontal: 8,
   },
+  voteButtonDisabled: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#e0e0e0',
+    marginHorizontal: 8,
+    opacity: 0.5,
+  },
   voteButtonText: {
     fontSize: 16,
   },
@@ -368,6 +463,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginHorizontal: 12,
     color: '#333',
+  },
+  voteDisabledText: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
   gasStationHeader: {
     flexDirection: 'row',

@@ -53,22 +53,14 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
             newLocation.longitude
           );
 
-          // Update fuel level
-          const fuelUsed = distance / state.selectedMotor.fuelEfficiency;
-          const newFuelLevel = Math.max(0, state.selectedMotor.currentFuelLevel - (fuelUsed / state.selectedMotor.totalDrivableDistance) * 100);
+          // CRITICAL FIX: Remove fuel calculation from background to prevent double consumption
+          // Fuel calculation is now handled only in the foreground component
+          // This prevents duplicate fuel updates and API calls
 
-          // Update motor fuel level in background
-          if (!isNaN(newFuelLevel) && state.selectedMotor.totalDrivableDistance > 0) {
-            updateFuelLevel(state.selectedMotor._id, newFuelLevel).catch((error) => {
-              console.warn('[Background] Fuel level update failed:', error.message);
-            });
-          }
-
-          // Update tracking stats
+          // Update tracking stats (without fuel calculation)
           const newStats = {
             ...state.stats,
             distance: state.stats.distance + distance,
-            fuelConsumed: state.stats.fuelConsumed + fuelUsed,
             duration: Math.floor((Date.now() - state.startTime) / 1000),
           };
 
@@ -109,6 +101,19 @@ export async function startBackgroundLocationTracking(tripId: string, selectedMo
     if (status !== 'granted') {
       console.warn('Background location permission not granted');
       return false;
+    }
+
+    // Check if task is already running and stop it first
+    const isAlreadyRunning = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    if (isAlreadyRunning) {
+      console.log('[Background] Stopping existing location tracking before starting new one');
+      try {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        // Small delay to ensure cleanup
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (stopError) {
+        console.warn('[Background] Error stopping existing tracking:', stopError);
+      }
     }
 
     // Save tracking state
@@ -171,12 +176,30 @@ export async function startBackgroundLocationTracking(tripId: string, selectedMo
 // Stop background location tracking
 export async function stopBackgroundLocationTracking() {
   try {
-    await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    // Check if the task is registered before trying to stop it
+    const isRegistered = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    
+    if (isRegistered) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      console.log('[Background] Location tracking stopped successfully');
+    } else {
+      console.log('[Background] Location tracking was not active, skipping stop');
+    }
+    
+    // Always clean up the tracking state
     await AsyncStorage.removeItem('trackingState');
-    console.log('[Background] Location tracking stopped');
     return true;
   } catch (error) {
     console.error('[Background] Error stopping location tracking:', error);
+    
+    // Even if stopping fails, clean up the tracking state
+    try {
+      await AsyncStorage.removeItem('trackingState');
+      console.log('[Background] Cleaned up tracking state despite stop error');
+    } catch (cleanupError) {
+      console.error('[Background] Error cleaning up tracking state:', cleanupError);
+    }
+    
     return false;
   }
 }
@@ -200,6 +223,45 @@ export async function getTrackingState() {
   } catch (error) {
     console.error('[Background] Error getting tracking state:', error);
     return null;
+  }
+}
+
+// Safely check if background location task is running
+export async function isLocationTaskRunning(): Promise<boolean> {
+  try {
+    return await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+  } catch (error) {
+    console.error('[Background] Error checking if location task is running:', error);
+    return false;
+  }
+}
+
+// Safely stop background location task with error handling
+export async function safeStopBackgroundLocation(): Promise<boolean> {
+  try {
+    const isRunning = await isLocationTaskRunning();
+    
+    if (isRunning) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      console.log('[Background] Location task stopped successfully');
+    } else {
+      console.log('[Background] Location task was not running');
+    }
+    
+    // Always clean up tracking state
+    await AsyncStorage.removeItem('trackingState');
+    return true;
+  } catch (error) {
+    console.error('[Background] Error in safe stop:', error);
+    
+    // Clean up tracking state even if stop failed
+    try {
+      await AsyncStorage.removeItem('trackingState');
+    } catch (cleanupError) {
+      console.error('[Background] Error cleaning up after safe stop:', cleanupError);
+    }
+    
+    return false;
   }
 }
 

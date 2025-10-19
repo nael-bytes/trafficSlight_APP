@@ -58,10 +58,10 @@ export default function TrafficReportsScreen({ navigation }) {
       setLoading(false);
     }
   };
-  const updateReportAddress = async (reportId, address) => {
+  const updateReportAddress = async (reportId: string, address: string) => {
     try {
       // Build body dynamically
-      const body = {};
+      const body: { address?: string } = {};
       if (address && address.trim() !== "") {
         body.address = address;
       }
@@ -126,6 +126,13 @@ export default function TrafficReportsScreen({ navigation }) {
       }
     }, []);
 
+    // Get vote counts and verification status
+    const upvotes = report.upvotes || 0;
+    const downvotes = report.downvotes || 0;
+    const totalVotes = upvotes + downvotes;
+    const isVerified = report.isVerified || false;
+    const voteRatio = totalVotes > 0 ? (upvotes / totalVotes) * 100 : 0;
+
     return (
       <View style={styles.reportCard}>
         <View style={styles.reportHeader}>
@@ -135,10 +142,35 @@ export default function TrafficReportsScreen({ navigation }) {
             color="#00ADB5"
             style={styles.reportIcon}
           />
-          <Text style={styles.reportTitle}>{report.reportType}</Text>
+          <View style={styles.reportTitleContainer}>
+            <Text style={styles.reportTitle}>{report.reportType}</Text>
+            {isVerified && (
+              <View style={styles.verifiedBadge}>
+                <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
+                <Text style={styles.verifiedText}>Verified</Text>
+              </View>
+            )}
+          </View>
         </View>
         <Text style={styles.reportDescription}>{report.description}</Text>
         <Text style={styles.reportAddress}>{address}</Text>
+        
+        {/* Vote Counts Section */}
+        <View style={styles.voteSection}>
+          <View style={styles.voteContainer}>
+            <Ionicons name="thumbs-up" size={16} color="#4CAF50" />
+            <Text style={styles.voteText}>{upvotes}</Text>
+          </View>
+          <View style={styles.voteContainer}>
+            <Ionicons name="thumbs-down" size={16} color="#F44336" />
+            <Text style={styles.voteText}>{downvotes}</Text>
+          </View>
+          <View style={styles.voteRatioContainer}>
+            <Text style={styles.voteRatioText}>
+              {voteRatio.toFixed(0)}% positive
+            </Text>
+          </View>
+        </View>
       </View>
     );
   };
@@ -152,7 +184,27 @@ export default function TrafficReportsScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#00ADB5" />
-      {/* ... your header code remains the same ... */}
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <LinearGradient
+          colors={['#00ADB5', '#007A80']}
+          style={styles.headerGradient}
+        >
+          <View style={styles.headerContent}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={styles.backButton}
+            >
+              <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <View style={styles.headerTextContainer}>
+              <Text style={styles.headerTitle}>Traffic Reports</Text>
+              <Text style={styles.headerSubtitle}>Community reported incidents</Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </View>
 
       <View style={styles.container}>
         {/* Search Bar */}
@@ -297,10 +349,32 @@ const styles = StyleSheet.create({
   reportIcon: {
     marginRight: 8,
   },
+  reportTitleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   reportTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#333333',
+    flex: 1,
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  verifiedText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4CAF50',
+    marginLeft: 4,
   },
   reportDescription: {
     fontSize: 14,
@@ -310,6 +384,39 @@ const styles = StyleSheet.create({
   reportAddress: {
     fontSize: 12,
     color: '#999999',
+    marginBottom: 12,
+  },
+  voteSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  voteContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  voteText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333333',
+    marginLeft: 4,
+  },
+  voteRatioContainer: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  voteRatioText: {
+    fontSize: 11,
+    color: '#666666',
+    fontWeight: '500',
   },
   emptyState: {
     alignItems: 'center',

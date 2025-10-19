@@ -7,7 +7,7 @@ import { useColorScheme, View } from 'react-native';
 import ProfileScreen from "../Screens/loggedIn/ProfileScreen";
 
 import RouteSelectionScreen from "../Screens/RouteSelectionScreenOptimized";
-import MapScreenTry from "../Screens/loggedIn/MapScreenTry";
+import MapScreenTry from "../Screens/loggedIn/MapScreenTryRefactored";
 
 
 // import TrackingScreen from "../Screens/_notImportant/TrackingScreen";
@@ -20,6 +20,7 @@ import NotificationSettingsScreen from "../Screens/account_tab/NotificationSetti
 
 import Menu from "../Screens/_notImportant/may22/Menu";
 import HomeScreen from "../Screens/loggedIn/HomeScreen";
+import MotorListScreen from "../Screens/loggedIn/MotorListScreen";
 import MotorDetailsScreen from "../Screens/loggedIn/MotorDetailsScreen";
 import TripDetailsScreen from "../Screens/loggedIn/TripDetailsScreen";
 import AlertDetailsScreen from "../Screens/loggedIn/AlertDetailsScreen";
@@ -37,6 +38,7 @@ import LicenseOCR from "../Screens/loggedIn/LicenceScanner";
 import allSavedDestinationScreen from "../Screens/loggedIn/allSavedDestination";
 import GasStationsScreen from "../Screens/loggedIn/gasStationsDetails";
 import MaintenanceScreen from "../Screens/loggedIn/MaintenanceDetails";
+import AddMaintenanceScreen from "../Screens/loggedIn/AddMaintenanceScreen";
 // import TrackTripScreen from "../Screens/screens/TrackTripScreen";
 
 const Tab = createBottomTabNavigator();
@@ -161,6 +163,7 @@ export default function SignedInStack() {
         <Stack.Screen name="AccountSettingsScreen" component={AccountSettingsScreen} />
         <Stack.Screen name="MapScreenTry" component={MapScreenTry} />
         <Stack.Screen name="Menu" component={Menu} />
+        <Stack.Screen name="MotorList" component={MotorListScreen} />
         <Stack.Screen name="MotorDetails" component={MotorDetailsScreen} />
         <Stack.Screen name="TripDetails" component={TripDetailsScreen} />
         <Stack.Screen name="AlertDetails" component={AlertDetailsScreen} />
@@ -182,6 +185,7 @@ export default function SignedInStack() {
       <Stack.Group screenOptions={{ presentation: 'modal' }}>
         <Stack.Screen name="AddMotorScreen" component={AddMotorScreen} />
         <Stack.Screen name="AddFuelLogScreen" component={AddFuelLogScreen} />
+        <Stack.Screen name="AddMaintenanceScreen" component={AddMaintenanceScreen} />
       </Stack.Group>
     </Stack.Navigator>
   );

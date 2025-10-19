@@ -13,6 +13,10 @@ import Toast from 'react-native-toast-message';
 import { AuthContext, AuthProvider } from "./AuthContext/AuthContextImproved";
 // import  UserContext, { UserProvider } from "./AuthContext/UserContextImproved";
 import { UserContext, UserProvider, useUser } from "./AuthContext/UserContextImproved";
+import { LocationProvider } from "./AuthContext/LocationContext";
+
+// Import location permission manager
+import { locationPermissionManager } from "./utils/locationPermissionManager";
 
 
 // Import navigation stacks
@@ -49,6 +53,10 @@ function MainApp() {
   useEffect(() => {
     const initializeApp = async () => {
       try {
+        // Request location permission once at app start
+        console.log('[App] Requesting location permission at startup...');
+        const permissionStatus = await locationPermissionManager.requestPermission();
+        console.log('[App] Location permission status:', permissionStatus);
 
         // Any app initialization logic can go here
         // For example: checking for app updates, initializing analytics, etc.
@@ -109,9 +117,8 @@ function MainApp() {
       }}
       fallback={
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F2EEEE' }}>
-          <ActivityIndicator size="large" color="#00ADB5" />
-          <Text style={{ marginTop: 16, fontSize: 16, color: '#666' }}>
-            Recovering from error...
+          <Text style={{ fontSize: 18, color: '#333', textAlign: 'center', marginHorizontal: 20 }}>
+            Something went wrong. Please restart the app.
           </Text>
         </View>
       }
@@ -137,7 +144,9 @@ export default function App() {
     >
       <AuthProvider>
         <UserProvider>
-          <MainApp />
+          <LocationProvider>
+            <MainApp />
+          </LocationProvider>
         </UserProvider>
       </AuthProvider>
     </ErrorBoundary>

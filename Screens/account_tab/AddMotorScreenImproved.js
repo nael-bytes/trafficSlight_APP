@@ -134,13 +134,20 @@ export default function AddMotorScreen({ navigation }) {
         if (motor.model && motor._id) {
           idMap[motor.model] = motor._id;
           fuelData[motor.model] = motor.fuelConsumption || 0;
-          options.push({ label: motor.model, value: motor.model });
+          options.push({ 
+            label: motor.model, 
+            value: motor.model,
+            motorcycleData: motor // Store the full motorcycle data
+          });
         }
       });
 
       setMotorItems(options);
       setMotorIdMap(idMap);
       setFuelMap(fuelData);
+      
+      console.log(`✅ Loaded ${data.length} motorcycle models`);
+      console.log('[AddMotorScreenImproved] Sample motorcycle data:', data[0]);
     } catch (error) {
       console.error('Error fetching motor models:', error);
       Toast.show({
@@ -167,6 +174,8 @@ export default function AddMotorScreen({ navigation }) {
       const data = await response.json();
       
       if (Array.isArray(data)) {
+        console.log('[AddMotorScreenImproved] Fetched user motors:', data.length, 'motors');
+        console.log('[AddMotorScreenImproved] Sample motor data:', data[0]);
         setMotorList(data);
       } else {
         throw new Error('Invalid data format received');
@@ -221,6 +230,14 @@ export default function AddMotorScreen({ navigation }) {
         nickname: formInputs.motorName.trim(),
       };
 
+      console.log('[AddMotorScreenImproved] Submitting motor data:', {
+        endpoint,
+        method,
+        requestBody,
+        selectedMotor: motorForm.selectedMotor,
+        motorcycleId
+      });
+
       const response = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -233,6 +250,7 @@ export default function AddMotorScreen({ navigation }) {
         throw new Error(responseData?.msg || `Request failed with status ${response.status}`);
       }
 
+      console.log("✅ Motor saved successfully:", responseData);
       Toast.show({
         type: 'success',
         text1: motorForm.editingId ? 'Motor Updated!' : 'Motor Added!',
@@ -397,7 +415,7 @@ export default function AddMotorScreen({ navigation }) {
           activeOpacity={0.8}
         >
           <Text style={styles.motorName}>{item.nickname || "Unnamed Motor"}</Text>
-          <Text style={styles.motorDetail}>Model: {item.name}</Text>
+          <Text style={styles.motorDetail}>Model: {item.motorcycleData?.name || item.name || "Unknown Model"}</Text>
           <Text style={styles.motorDetail}>
             Fuel Efficiency: {item.fuelEfficiency ? `${item.fuelEfficiency} km/L` : "N/A"}
           </Text>
@@ -414,7 +432,7 @@ export default function AddMotorScreen({ navigation }) {
             style={styles.editButton}
             onPress={() => {
               setMotorForm({
-                selectedMotor: item.name,
+                selectedMotor: item.motorcycleData?.name || item.name || "Unknown Model",
                 fuelEfficiency: String(item.fuelEfficiency || ""),
                 editingId: item._id,
               });

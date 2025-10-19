@@ -64,7 +64,6 @@ export interface FuelConsumptionStats {
 export interface MotorAnalytics {
   totalDistance: number;
   tripsCompleted: number;
-  totalFuelUsed: number;
   maintenanceAlerts: string[];
 }
 
@@ -76,6 +75,8 @@ export interface Motor {
   nickname: string;
   name: string;
   fuelEfficiency: number;
+  fuelConsumption: number; // km/L - same as fuelEfficiency but more explicit
+  fuelTank: number; // Total tank capacity in liters
   engineDisplacement: number;
   plateNumber: string;
   registrationDate: string; // ISO or empty string
@@ -116,12 +117,18 @@ export interface MapComponentProps {
   };
   mapStyle: string;
   currentLocation: LocationCoords | null;
+  destination?: LocationCoords | null; // Add destination prop
+  userId?: string; // Add userId prop for voting
   reportMarkers: any[]; // More flexible to accept different report types
   gasStations: any[]; // More flexible to accept different gas station types
   showReports: boolean;
   showGasStations: boolean;
   routeCoordinates?: LocationCoords[];
+  snappedRouteCoordinates?: LocationCoords[];
   isTracking?: boolean;
+  onReportVoted?: () => void; // Callback to refresh reports data after vote
+  onMapPress?: (event: any) => void; // Callback for map press events
+  selectedMapLocation?: LocationCoords | null; // Selected location for map selection
 }
 
 // Gas station types
@@ -148,7 +155,6 @@ export interface GasStation {
 export interface RideStats {
   duration: number;        // seconds
   distance: number;        // km
-  fuelConsumed: number;    // L
   avgSpeed: number;        // km/h
   speed: number;           // km/h current
 }

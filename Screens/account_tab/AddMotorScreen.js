@@ -66,12 +66,18 @@ export default function AddMotorScreen({ navigation }) {
       data.forEach((motor) => {
         idMap[motor.model] = motor._id;
         fuelData[motor.model] = motor.fuelConsumption;
-        options.push({ label: motor.model, value: motor.model });
+        options.push({ 
+          label: motor.model, 
+          value: motor.model,
+          motorcycleData: motor // Store the full motorcycle data
+        });
       });
       setMotorItems(options);
       setMotorIdMap(idMap);
       setFuelMap(fuelData);
-    } catch {
+      console.log('[AddMotorScreen] Fetched motorcycle models:', data.length);
+    } catch (error) {
+      console.error('[AddMotorScreen] Error fetching motorcycle models:', error);
       Alert.alert("Error", "Failed to load motorcycle models.");
     }
   }, []);
@@ -82,8 +88,11 @@ export default function AddMotorScreen({ navigation }) {
     try {
       const res = await fetch(`${LOCALHOST_IP}/api/user-motors/user/${user._id}`);
       const data = await res.json();
+      console.log('[AddMotorScreen] Fetched user motors:', data.length, 'motors');
+      console.log('[AddMotorScreen] Sample motor data:', data[0]);
       setMotorList(data);
-    } catch {
+    } catch (error) {
+      console.error('[AddMotorScreen] Error fetching user motors:', error);
       Alert.alert("Error", "Failed to load your motors.");
     } finally {
       setLoading(false);
@@ -116,23 +125,34 @@ export default function AddMotorScreen({ navigation }) {
         : `${LOCALHOST_IP}/api/user-motors/`;
       const method = motorForm.editingId ? "PUT" : "POST";
 
+      const requestData = {
+        userId: user._id,
+        motorcycleId,
+        nickname: formInputs.motorName.trim(),
+      };
+
+      console.log('[AddMotorScreen] Submitting motor data:', {
+        endpoint,
+        method,
+        requestData,
+        selectedMotor: motorForm.selectedMotor,
+        motorcycleId
+      });
+
       const res = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user._id,
-          motorcycleId,
-          nickname: formInputs.motorName.trim(),
-        }),
+        body: JSON.stringify(requestData),
       });
 
       const resData = await res.json();
 
       if (!res.ok) {
-        console.log("❌ Save failed response:", resData);
+        console.error("❌ Save failed response:", resData);
         throw new Error(resData?.msg || "Request failed.");
       }
 
+      console.log("✅ Motor saved successfully:", resData);
       Alert.alert("Success", motorForm.editingId ? "Motor updated!" : "Motor added!");
       resetForm();
       setShowAddForm(false);
@@ -217,7 +237,7 @@ export default function AddMotorScreen({ navigation }) {
           >
             <View style={styles.motorInfo}>
               <Text style={styles.motorName}>{item.nickname || "Unnamed Motor"}</Text>
-              <Text style={styles.motorDetail}>Model: {item.name}</Text>
+              <Text style={styles.motorDetail}>Model: {item.motorcycleData?.name || item.name || "Unknown Model"}</Text>
               <Text style={styles.motorDetail}>
                 Fuel Efficiency: {item.fuelEfficiency ? `${item.fuelEfficiency} km/L` : "N/A"}
               </Text>
@@ -230,7 +250,7 @@ export default function AddMotorScreen({ navigation }) {
               style={styles.editButton}
               onPress={() => {
                 setMotorForm({
-                  selectedMotor: item.name,
+                  selectedMotor: item.motorcycleData?.name || item.name || "Unknown Model",
                   fuelEfficiency: String(item.fuelEfficiency || ""),
                   editingId: item._id,
                 });

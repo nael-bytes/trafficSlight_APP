@@ -3,8 +3,12 @@ import {
   View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity, Alert
 } from "react-native";
 import { RouteProp, useNavigation } from "@react-navigation/native";
-import { RootStackParamList } from "./HomeScreen";
 import Icon from "react-native-vector-icons/Ionicons";
+
+type RootStackParamList = {
+  MotorDetails: { item: any };
+  MotorList: { fullList: any[] };
+};
 
 type Props = {
   route: RouteProp<RootStackParamList, "MotorDetails">;
@@ -15,6 +19,15 @@ export default function MotorDetailsScreen({ route }: Props) {
   const navigation = useNavigation();
   const [loading, setLoading] = useState(false);
 
+  // Add safety check for item
+  if (!item) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>No motor data available</Text>
+      </View>
+    );
+  }
+
   // Initialize state with defaults for nested objects
   const [formData, setFormData] = useState({
     ...item,
@@ -22,14 +35,14 @@ export default function MotorDetailsScreen({ route }: Props) {
       average: 0,
       max: 0,
       min: 0,
-      ...item.fuelConsumptionStats,
+      ...(item.fuelConsumptionStats || {}),
     },
     analytics: {
       tripsCompleted: 0,
       totalDistance: 0,
       totalFuelUsed: 0,
       maintenanceAlerts: [],
-      ...item.analytics,
+      ...(item.analytics || {}),
     },
   });
 
@@ -282,4 +295,5 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 10, padding: 12, fontSize: 16, backgroundColor: "#FAFAFA" },
   saveButton: { backgroundColor: "#2F80ED", paddingVertical: 16, borderRadius: 12, marginTop: 20, alignItems: "center", shadowColor: "#2F80ED", shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
   saveText: { fontSize: 18, color: "#FFF", fontWeight: "700" },
+  errorText: { fontSize: 16, color: "#FF6B6B", textAlign: "center", marginTop: 50 },
 });

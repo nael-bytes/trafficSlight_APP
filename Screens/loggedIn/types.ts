@@ -9,7 +9,7 @@ export interface Motor {
   age: number;
   totalDistance: number;
   currentFuelLevel: number;
-  tankCapacity: number;
+  fuelTank: number;
   lastMaintenanceDate?: string;
   lastOilChange?: string;
   lastRegisteredDate?: string;

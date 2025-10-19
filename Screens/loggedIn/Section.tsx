@@ -71,10 +71,10 @@ const Section: React.FC<SectionProps> = ({
     switch (title) {
       case 'My Motors':
         return {
-          title: item.name || item.motorcycleId?.model || 'Motor',
+          title: item.nickname || item.motorcycleData?.name || 'Motor',
           subtext: item.plateNumber || 'No plate',
-          extra: item.motorcycleId?.engineDisplacement
-            ? `${item.motorcycleId.engineDisplacement}cc`
+          extra: item.motorcycleData?.engineDisplacement
+            ? `${item.motorcycleData.engineDisplacement}cc`
             : '',
         };
       case 'My Trips':

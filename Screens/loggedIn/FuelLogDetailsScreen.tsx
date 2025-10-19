@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -45,6 +45,48 @@ type SortOption = {
   icon: keyof typeof Ionicons.glyphMap;
 };
 
+type MaintenanceRefuelRecord = {
+  _id: string;
+  details: {
+    cost: number;
+    quantity: number;
+    notes?: string;
+  };
+  motorId: {
+    _id: string;
+    nickname: string;
+  };
+  type: 'refuel';
+  timestamp: string;
+  location?: {
+    latitude: number;
+    longitude: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
+  source: 'maintenance'; // To distinguish from regular fuel logs
+};
+
+type CombinedFuelRecord = {
+  _id: string;
+  date: string;
+  liters: number;
+  pricePerLiter: number;
+  totalCost: number;
+  odometer?: number;
+  notes?: string;
+  motorId: {
+    _id: string;
+    nickname: string;
+    motorcycleId?: {
+      model: string;
+    };
+  };
+  location?: string;
+  source: 'fuel_log' | 'maintenance'; // To distinguish between sources
+};
+
 const sortOptions: SortOption[] = [
   { label: 'Date', value: 'date', icon: 'calendar-outline' },
   { label: 'Volume', value: 'liters', icon: 'water-outline' },
@@ -59,6 +101,7 @@ export default function FuelLogDetailsScreen() {
   const route = useRoute();
   const { item, fullList } = route.params as RouteParams;
   const [logs, setLogs] = useState([]);
+  const [maintenanceRefuels, setMaintenanceRefuels] = useState<MaintenanceRefuelRecord[]>([]);
   const [filtered, setFiltered] = useState([]);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -73,7 +116,9 @@ export default function FuelLogDetailsScreen() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
-    if (user?._id) fetchLogs();
+    if (user?._id) {
+      fetchAllFuelData();
+    }
   }, [user]);
 
   const fetchLogs = async () => {
@@ -82,19 +127,74 @@ export default function FuelLogDetailsScreen() {
       const data = await res.json();
       const sorted = [...data].reverse();
       setLogs(sorted);
+      return sorted;
+    } catch (error) {
+      console.log("Failed to fetch fuel logs:", error);
+      return [];
+    }
+  };
+
+  const fetchMaintenanceRefuels = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/maintenance-records/user/${user._id}`);
+      const data = await res.json();
+      // Filter only refuel records
+      const refuelRecords = data.filter((record: any) => record.type === 'refuel');
+      setMaintenanceRefuels(refuelRecords);
+      return refuelRecords;
+    } catch (error) {
+      console.log("Failed to fetch maintenance refuels:", error);
+      return [];
+    }
+  };
+
+  const fetchAllFuelData = async () => {
+    setLoading(true);
+    try {
+      const [fuelLogs, maintenanceRefuelsData] = await Promise.all([
+        fetchLogs(),
+        fetchMaintenanceRefuels()
+      ]);
+      
+      // Transform maintenance refuels to match fuel log format
+      const transformedMaintenanceRefuels = maintenanceRefuelsData.map((record: MaintenanceRefuelRecord) => ({
+        _id: `maintenance_${record._id}`,
+        date: record.timestamp,
+        liters: record.details.quantity,
+        pricePerLiter: record.details.cost / record.details.quantity,
+        totalCost: record.details.cost,
+        odometer: undefined, // Maintenance records don't have odometer
+        notes: record.details.notes,
+        motorId: {
+          _id: record.motorId._id,
+          nickname: record.motorId.nickname,
+          motorcycleId: undefined
+        },
+        location: record.location ? `${record.location.latitude}, ${record.location.longitude}` : undefined,
+        source: 'maintenance' as const
+      }));
+
+      // Combine both data sources
+      const combinedData = [...fuelLogs.map((log: any) => ({ ...log, source: 'fuel_log' })), ...transformedMaintenanceRefuels];
+      
+      // Sort by date (newest first)
+      const sorted = combinedData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      
       setFiltered(sorted);
-    } catch {
-      // alert("Failed to fetch fuel logs.");
-      console.log("Failed to fetch fuel logs.");
+    } catch (error) {
+      console.log("Failed to fetch fuel data:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const deleteFuelLog = async (logId: string) => {
+  const deleteFuelLog = async (logId: string, source: 'fuel_log' | 'maintenance') => {
+    const isMaintenance = source === 'maintenance';
+    const actualId = isMaintenance ? logId.replace('maintenance_', '') : logId;
+    
     Alert.alert(
-      "Delete Fuel Log",
-      "Are you sure you want to delete this fuel log? This action cannot be undone.",
+      "Delete Fuel Record",
+      `Are you sure you want to delete this ${isMaintenance ? 'maintenance refuel record' : 'fuel log'}? This action cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -102,9 +202,13 @@ export default function FuelLogDetailsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              console.log('Attempting to delete fuel log:', logId);
+              console.log(`Attempting to delete ${isMaintenance ? 'maintenance refuel' : 'fuel log'}:`, actualId);
               
-              const response = await fetch(`${API_BASE_URL}/api/fuel-logs/${logId}`, {
+              const endpoint = isMaintenance 
+                ? `${API_BASE_URL}/api/maintenance-records/${actualId}`
+                : `${API_BASE_URL}/api/fuel-logs/${actualId}`;
+              
+              const response = await fetch(endpoint, {
                 method: 'DELETE',
                 headers: {
                   'Content-Type': 'application/json',
@@ -113,51 +217,32 @@ export default function FuelLogDetailsScreen() {
               });
 
               console.log('Delete response status:', response.status);
-              console.log('Delete response headers:', response.headers);
-
-              // Try to get the raw response text first
-              const responseText = await response.text();
-              console.log('Raw response:', responseText);
-
-              // Check if response is empty
-              if (!responseText.trim()) {
-                if (response.ok) {
-                  // If response is empty but status is OK (common for DELETE operations)
-                  setLogs(prevLogs => prevLogs.filter(log => log._id !== logId));
-                  setFiltered(prevFiltered => prevFiltered.filter(log => log._id !== logId));
-                  Alert.alert("Success", "Fuel log deleted successfully");
-                  return;
-                } else {
-                  throw new Error('Empty response from server');
-                }
-              }
-
-              // Try to parse JSON only if we have a response
-              let data;
-              try {
-                data = JSON.parse(responseText);
-              } catch (e) {
-                console.error('Failed to parse response as JSON:', e);
-                if (response.ok) {
-                  // If status is OK but response isn't JSON, still treat as success
-                  setLogs(prevLogs => prevLogs.filter(log => log._id !== logId));
-                  setFiltered(prevFiltered => prevFiltered.filter(log => log._id !== logId));
-                  Alert.alert("Success", "Fuel log deleted successfully");
-                  return;
-                } else {
-                  throw new Error('Invalid JSON response from server');
-                }
-              }
 
               if (response.ok) {
-                setLogs(prevLogs => prevLogs.filter(log => log._id !== logId));
+                // Update the filtered list
                 setFiltered(prevFiltered => prevFiltered.filter(log => log._id !== logId));
+                
+                // If it's a fuel log, also update the logs state
+                if (!isMaintenance) {
+                  setLogs(prevLogs => prevLogs.filter(log => log._id !== logId));
+                }
+                
                 Alert.alert(
                   "Success",
-                  data?.message || "Fuel log deleted successfully"
+                  `${isMaintenance ? 'Maintenance refuel record' : 'Fuel log'} deleted successfully`
                 );
               } else {
-                throw new Error(data?.message || data?.error || 'Failed to delete fuel log');
+                const responseText = await response.text();
+                let errorMessage = 'Failed to delete record';
+                
+                try {
+                  const errorData = JSON.parse(responseText);
+                  errorMessage = errorData.message || errorData.error || errorMessage;
+                } catch (e) {
+                  errorMessage = responseText || errorMessage;
+                }
+                
+                throw new Error(errorMessage);
               }
             } catch (error) {
               console.error('Delete operation failed:', {
@@ -168,7 +253,7 @@ export default function FuelLogDetailsScreen() {
               
               Alert.alert(
                 "Error",
-                "Failed to delete fuel log. Please try again later. " +
+                `Failed to delete ${isMaintenance ? 'maintenance refuel record' : 'fuel log'}. Please try again later. ` +
                 (error.message || "Unknown error occurred")
               );
             }
@@ -179,7 +264,7 @@ export default function FuelLogDetailsScreen() {
   };
 
   useEffect(() => {
-    let temp = [...logs];
+    let temp = [...filtered];
 
     if (search.trim()) {
       const term = search.toLowerCase();
@@ -235,7 +320,7 @@ export default function FuelLogDetailsScreen() {
     temp.sort(sortFunction);
     setFiltered(temp);
     setPage(1);
-  }, [search, fromDateStr, toDateStr, sortBy, sortOrder, logs]);
+  }, [search, fromDateStr, toDateStr, sortBy, sortOrder]);
 
   const paginated = filtered.slice(0, page * PAGE_SIZE);
   const loadMore = () => {
@@ -318,16 +403,25 @@ export default function FuelLogDetailsScreen() {
 
   const renderFuelLog = ({ item }) => {
     const isExpanded = expandedLogId === item._id;
+    const isMaintenance = item.source === 'maintenance';
 
     return (
       <TouchableOpacity 
-        style={[styles.logCard, isExpanded && styles.logCardExpanded]}
+        style={[styles.logCard, isExpanded && styles.logCardExpanded, isMaintenance && styles.maintenanceCard]}
         onPress={() => toggleExpand(item._id)}
         activeOpacity={0.7}
       >
         <View style={styles.logHeader}>
           <View style={styles.logHeaderLeft}>
-            <Text style={styles.dateText}>{formatDate(item.date)}</Text>
+            <View style={styles.dateRow}>
+              <Text style={styles.dateText}>{formatDate(item.date)}</Text>
+              {isMaintenance && (
+                <View style={styles.sourceBadge}>
+                  <Ionicons name="build-outline" size={12} color="#00ADB5" />
+                  <Text style={styles.sourceBadgeText}>Maintenance</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.motorName}>{item.motorId?.nickname ?? 'Unknown Motor'}</Text>
           </View>
           <View style={styles.headerActions}>
@@ -337,7 +431,7 @@ export default function FuelLogDetailsScreen() {
             <TouchableOpacity
               onPress={(e) => {
                 e.stopPropagation();
-                deleteFuelLog(item._id);
+                deleteFuelLog(item._id, item.source);
               }}
               style={styles.deleteButton}
             >
@@ -385,6 +479,12 @@ export default function FuelLogDetailsScreen() {
                     <View style={styles.gridItem}>
                       <Text style={styles.gridLabel}>Location</Text>
                       <Text style={styles.gridValue}>{item.location}</Text>
+                    </View>
+                  )}
+                  {isMaintenance && (
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Source</Text>
+                      <Text style={styles.gridValue}>Maintenance Record</Text>
                     </View>
                   )}
                 </View>
@@ -755,5 +855,30 @@ const styles = StyleSheet.create({
   sortOptionTextSelected: {
     color: '#00ADB5',
     fontWeight: '500',
+  },
+  // Maintenance-specific styles
+  maintenanceCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#00ADB5',
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  sourceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F8F9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+  },
+  sourceBadgeText: {
+    fontSize: 10,
+    color: '#00ADB5',
+    fontWeight: '600',
+    marginLeft: 2,
   },
 });

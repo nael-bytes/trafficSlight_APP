@@ -4,50 +4,65 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import * as Location from 'expo-location';
 import { calculateDistance } from '../utils/location';
 import { updateFuelLevel } from '../utils/api';
+import { snapToRoads, snapSinglePoint } from '../utils/roadSnapping';
+import { calculateNewFuelLevel, calculateFuelLevelAfterRefuel } from '../utils/fuelCalculations';
 import type { RideStats, LocationCoords, Motor } from '../types';
 
 interface UseTrackingProps {
   selectedMotor: Motor | null;
   onStatsUpdate?: (stats: RideStats) => void;
+  onSnappingFailed?: () => void;
 }
 
 interface UseTrackingReturn {
   isTracking: boolean;
   rideStats: RideStats;
   routeCoordinates: LocationCoords[];
+  snappedRouteCoordinates: LocationCoords[];
   startTracking: () => Promise<void>;
   stopTracking: () => void;
   resetTracking: () => void;
 }
 
-export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps): UseTrackingReturn => {
+export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: UseTrackingProps): UseTrackingReturn => {
   const [isTracking, setIsTracking] = useState(false);
   const [rideStats, setRideStats] = useState<RideStats>({
     duration: 0,
     distance: 0,
-    fuelConsumed: 0,
     avgSpeed: 0,
     speed: 0,
   });
   const [routeCoordinates, setRouteCoordinates] = useState<LocationCoords[]>([]);
+  const [snappedRouteCoordinates, setSnappedRouteCoordinates] = useState<LocationCoords[]>([]);
 
   // Refs for tracking data
   const trackingLocationSub = useRef<Location.LocationSubscription | null>(null);
   const lastLocationRef = useRef<{ latitude: number; longitude: number; timestamp: number } | null>(null);
+  const lastSnappedLocationRef = useRef<{ latitude: number; longitude: number; timestamp: number } | null>(null);
   const trackingStartTimeRef = useRef<number | null>(null);
   const statsTimer = useRef<NodeJS.Timeout | null>(null);
+  const snapBatchRef = useRef<LocationCoords[]>([]);
+  const snapTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const resetTracking = useCallback(() => {
     setRouteCoordinates([]);
+    setSnappedRouteCoordinates([]);
     setRideStats({
       duration: 0,
       distance: 0,
-      fuelConsumed: 0,
       avgSpeed: 0,
       speed: 0,
     });
     lastLocationRef.current = null;
+    lastSnappedLocationRef.current = null;
     trackingStartTimeRef.current = null;
+    snapBatchRef.current = [];
+    
+    // Clear snap timer
+    if (snapTimerRef.current) {
+      clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = null;
+    }
   }, []);
 
   const startTracking = useCallback(async () => {
@@ -68,26 +83,86 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
       });
     }, 1000);
 
-    // Start location tracking
+    // Start location tracking with optimized settings
     try {
       trackingLocationSub.current = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.Highest,
-          timeInterval: 1000, // 1 second
-          distanceInterval: 1, // 1 meter
+          accuracy: Location.Accuracy.Balanced, // Reduced from Highest to save battery
+          timeInterval: 5000, // Increased to 5 seconds to reduce frequency
+          distanceInterval: 10, // Increased to 10 meters to reduce frequency
         },
-        (location) => {
+        async (location) => {
           if (!location || !location.coords) return;
 
           const lat = location.coords.latitude;
           const lon = location.coords.longitude;
           const timestamp = location.timestamp ?? Date.now();
 
-          // Add to route coordinates
-          setRouteCoordinates(prev => [...prev, { latitude: lat, longitude: lon }]);
+          // CRITICAL FIX: Limit route coordinates to prevent memory leak
+          setRouteCoordinates(prev => {
+            const newCoords = [...prev, { latitude: lat, longitude: lon }];
+            // Keep only last 1000 points to prevent memory overflow
+            return newCoords.length > 1000 ? newCoords.slice(-1000) : newCoords;
+          });
 
-          // Calculate distance delta
-          const last = lastLocationRef.current;
+          // Add to snap batch for road-snapping
+          snapBatchRef.current.push({ latitude: lat, longitude: lon });
+
+          // Process road-snapping in larger batches (every 10 points or 30 seconds)
+          if (snapBatchRef.current.length >= 10 || !snapTimerRef.current) {
+            if (snapTimerRef.current) {
+              clearTimeout(snapTimerRef.current);
+            }
+            
+            snapTimerRef.current = setTimeout(async () => {
+              try {
+                const batchToSnap = [...snapBatchRef.current];
+                snapBatchRef.current = [];
+                
+                if (batchToSnap.length > 0) {
+                  const snapResult = await snapToRoads(batchToSnap);
+                  
+                  if (snapResult.hasSnapped && snapResult.snappedCoordinates.length > 0) {
+                    setSnappedRouteCoordinates(prev => {
+                      const newSnapped = [...prev, ...snapResult.snappedCoordinates];
+                      // Keep only last 1000 points to prevent memory overflow
+                      return newSnapped.length > 1000 ? newSnapped.slice(-1000) : newSnapped;
+                    });
+                    
+                    // Use the last snapped point for distance calculation
+                    const lastSnapped = snapResult.snappedCoordinates[snapResult.snappedCoordinates.length - 1];
+                    lastSnappedLocationRef.current = { 
+                      latitude: lastSnapped.latitude, 
+                      longitude: lastSnapped.longitude, 
+                      timestamp 
+                    };
+                  } else {
+                    // No snapped points returned - user might be too far from roads
+                    console.warn('[useTracking] No snapped points returned - user might be too far from roads');
+                    if (onSnappingFailed) {
+                      onSnappingFailed();
+                    }
+                  }
+                }
+              } catch (error) {
+                console.warn('[useTracking] Road snapping failed:', error);
+                // Fallback to original coordinates
+                setSnappedRouteCoordinates(prev => {
+                  const newCoords = [...prev, ...snapBatchRef.current];
+                  return newCoords.length > 1000 ? newCoords.slice(-1000) : newCoords;
+                });
+                snapBatchRef.current = [];
+                
+                // Notify parent component about snapping failure
+                if (onSnappingFailed) {
+                  onSnappingFailed();
+                }
+              }
+            }, 30000); // Increased to 30 seconds to reduce API calls
+          }
+
+          // Calculate distance delta using snapped coordinates if available
+          const last = lastSnappedLocationRef.current || lastLocationRef.current;
           let distanceDeltaKm = 0;
           if (last) {
             distanceDeltaKm = calculateDistance(last.latitude, last.longitude, lat, lon);
@@ -103,12 +178,9 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
             currentSpeedKmh = (distanceDeltaKm / (dtSeconds / 3600));
           }
 
-          // Update stats
+          // Update stats with distance tracking only
           setRideStats(prev => {
             const newDistance = prev.distance + distanceDeltaKm;
-            const fuelEfficiency = selectedMotor?.fuelEfficiency ?? 0;
-            const fuelDelta = fuelEfficiency > 0 ? (distanceDeltaKm / fuelEfficiency) : 0;
-            const newFuel = prev.fuelConsumed + fuelDelta;
 
             const elapsedSeconds = trackingStartTimeRef.current 
               ? Math.floor((Date.now() - trackingStartTimeRef.current) / 1000) 
@@ -118,46 +190,12 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
             const newStats = {
               ...prev,
               distance: newDistance,
-              fuelConsumed: newFuel,
               speed: currentSpeedKmh,
               avgSpeed,
             };
 
-            // Update fuel level in backend
-            if (selectedMotor && distanceDeltaKm > 0) {
-              // Calculate fuel level reduction based on distance traveled vs total drivable distance
-              const totalDrivableDistance = selectedMotor.totalDrivableDistance || 0;
-
-              let newFuelLevel = selectedMotor.currentFuelLevel;
-
-              if (totalDrivableDistance > 0) {
-                // Calculate fraction of total distance traveled
-                const distanceFraction = distanceDeltaKm / totalDrivableDistance;
-
-                // Convert to fuel level percentage reduction (assuming linear relationship)
-                const fuelLevelReduction = distanceFraction * 100;
-
-                newFuelLevel = Math.max(0, selectedMotor.currentFuelLevel - fuelLevelReduction);
-
-                console.log('[useTracking] Fuel update:', {
-                  currentFuelLevel: selectedMotor.currentFuelLevel,
-                  distanceDeltaKm,
-                  totalDrivableDistance,
-                  distanceFraction,
-                  fuelLevelReduction,
-                  newFuelLevel
-                });
-              } else {
-                console.warn('[useTracking] totalDrivableDistance is 0 or undefined, cannot calculate fuel level');
-              }
-
-              if (!isNaN(newFuelLevel) && totalDrivableDistance > 0) {
-                updateFuelLevel(selectedMotor._id, newFuelLevel).catch((error) => {
-                  console.warn('[useTracking] Fuel level update failed (non-critical):', error.message);
-                  // Don't throw error - fuel tracking continues locally
-                });
-              }
-            }
+        // Note: Fuel level calculation is handled in the parent component (RouteSelectionScreenOptimized)
+        // to avoid double fuel consumption. The parent component receives stats updates via onStatsUpdate callback.
 
             return newStats;
           });
@@ -185,9 +223,16 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
       trackingLocationSub.current = null;
     }
 
+    if (snapTimerRef.current) {
+      clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = null;
+    }
+
     // Reset refs
     lastLocationRef.current = null;
+    lastSnappedLocationRef.current = null;
     trackingStartTimeRef.current = null;
+    snapBatchRef.current = [];
   }, []);
 
   // Cleanup on unmount
@@ -195,6 +240,7 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
     return () => {
       if (statsTimer.current) clearInterval(statsTimer.current);
       if (trackingLocationSub.current) trackingLocationSub.current.remove();
+      if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
     };
   }, []);
 
@@ -203,9 +249,9 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
   useEffect(() => {
     if (!onStatsUpdate || !isTracking) return;
     
-    // Throttle updates to once every 2 seconds to prevent excessive parent re-renders
+    // CRITICAL FIX: Increased throttle to 5 seconds to reduce parent re-renders
     const now = Date.now();
-    if (now - lastStatsUpdateRef.current < 2000) return;
+    if (now - lastStatsUpdateRef.current < 5000) return;
     
     lastStatsUpdateRef.current = now;
     onStatsUpdate(rideStats);
@@ -215,6 +261,7 @@ export const useTracking = ({ selectedMotor, onStatsUpdate }: UseTrackingProps):
     isTracking,
     rideStats,
     routeCoordinates,
+    snappedRouteCoordinates,
     startTracking,
     stopTracking,
     resetTracking,

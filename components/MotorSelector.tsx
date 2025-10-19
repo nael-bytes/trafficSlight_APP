@@ -75,7 +75,7 @@ export const MotorSelector: React.FC<MotorSelectorProps> = ({
         <View style={styles.statsRow}>
           <MaterialIcons name="analytics" size={24} color="#2196F3" />
           <Text style={styles.statsText}>
-            LIFETIME TOTAL: {selectedMotor?.analytics.totalDistance.toFixed(2)} km
+            LIFETIME TOTAL: {(selectedMotor?.analytics.totalDistance + currentTripDistance).toFixed(2)} km
           </Text>
         </View>
 
@@ -86,12 +86,16 @@ export const MotorSelector: React.FC<MotorSelectorProps> = ({
           </Text>
         </View>
 
-        <View style={styles.statsRow}>
-          <MaterialIcons name="opacity" size={24} color="#9C27B0" />
-          <Text style={styles.statsText}>
-            TOTAL FUEL USED: {selectedMotor?.analytics.totalFuelUsed.toFixed(2)} L
-          </Text>
-        </View>
+        {/* Maintenance Indicator */}
+        {selectedMotor?.analytics?.maintenanceAlerts && selectedMotor.analytics.maintenanceAlerts.length > 0 && (
+          <View style={styles.maintenanceRow}>
+            <MaterialIcons name="build" size={24} color="#E74C3C" />
+            <Text style={styles.maintenanceText}>
+              MAINTENANCE ALERTS: {selectedMotor.analytics.maintenanceAlerts.length}
+            </Text>
+          </View>
+        )}
+
       </View>
 
       <TouchableOpacity style={styles.closeButton} onPress={onClose}>
@@ -246,5 +250,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
+  },
+  maintenanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E74C3C',
+    marginTop: 8,
+  },
+  maintenanceText: {
+    color: '#E74C3C',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 8,
   },
 });
