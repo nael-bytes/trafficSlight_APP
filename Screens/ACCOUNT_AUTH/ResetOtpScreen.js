@@ -11,28 +11,54 @@ export default function ResetOtpScreen({ navigation, route }) {
   const email = route.params?.email;
 
   useEffect(() => {
-    // Automatically send OTP when screen opens
-    const sendOtp = async () => {
+    // Automatically send reset token when screen opens
+    const sendResetToken = async () => {
       try {
-        const res = await fetch(`${LOCALHOST_IP}/api/auth/request-reset`, {
+        // Uses: POST /api/auth/reset-password (as per API documentation)
+        // Use API_BASE or LOCALHOST_IP depending on what's configured
+        const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+        const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email }),
         });
 
-        const data = await res.json();
-        if (!res.ok) {
-          Alert.alert("Error", data?.msg || "Failed to send OTP.");
+        // Check response status before parsing JSON
+        let data;
+        try {
+          data = await res.json();
+        } catch (parseError) {
+          console.error('[ResetOtpScreen] Failed to parse response:', parseError);
+          Alert.alert("Error", `Server returned invalid response (Status: ${res.status}). Please try again.`);
           navigation.goBack();
+          return;
+        }
+
+        if (!res.ok) {
+          const errorMsg = data?.message || data?.msg || data?.error || `Server error (Status: ${res.status})`;
+          console.error('[ResetOtpScreen] Server error:', {
+            status: res.status,
+            statusText: res.statusText,
+            data: data,
+            email: email
+          });
+          Alert.alert("Error", errorMsg);
+          navigation.goBack();
+          return;
+        }
+        // Success - OTP sent (silently, user will see the screen)
+        if (__DEV__) {
+          console.log('[ResetOtpScreen] OTP sent successfully');
         }
       } catch (err) {
-        Alert.alert("Error", "Failed to connect to server.");
+        console.error('[ResetOtpScreen] Error sending OTP:', err);
+        Alert.alert("Error", err.message || "Failed to connect to server. Please check your internet connection.");
         navigation.goBack();
       }
     };
 
     if (email) {
-      sendOtp();
+      sendResetToken();
       setCooldown(60);
     } else navigation.goBack();
   }, []);
@@ -45,21 +71,26 @@ export default function ResetOtpScreen({ navigation, route }) {
   }, [cooldown]);
 
   const handleVerifyOtp = async () => {
-    if (!otp) return Alert.alert("Missing", "Enter the OTP sent to your email.");
+    if (!otp) return Alert.alert("Missing", "Enter the reset code sent to your email.");
 
     setLoading(true);
     try {
-      const res = await fetch(`${LOCALHOST_IP}/api/auth/verify-reset-otp`, {
+      // Uses: POST /api/auth/verify-reset (as per USER_FRONTEND_IMPLEMENTATION_GUIDE.md)
+      // Parameters: email, otpCode (not token)
+      // Use API_BASE or LOCALHOST_IP depending on what's configured
+      const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+      const res = await fetch(`${API_BASE}/api/auth/verify-reset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp }),
+        body: JSON.stringify({ email, otpCode: otp }),
       });
 
       const data = await res.json();
       if (res.ok) {
-        navigation.replace("NewPassword", { email, otp });
+        // Token verified successfully, navigate to change password screen
+        navigation.replace("NewPassword", { email, token: otp });
       } else {
-        Alert.alert("Invalid OTP", data?.msg || "Incorrect or expired code.");
+        Alert.alert("Invalid Code", data?.message || data?.msg || "Incorrect or expired code.");
       }
     } catch (err) {
       Alert.alert("Error", "Something went wrong.");
@@ -72,17 +103,25 @@ export default function ResetOtpScreen({ navigation, route }) {
     if (cooldown > 0 || resending) return;
     setResending(true);
     try {
-      const res = await fetch(`${LOCALHOST_IP}/api/auth/request-reset`, {
+      // Uses: POST /api/auth/reset-password (as per API documentation)
+      // Use API_BASE or LOCALHOST_IP depending on what's configured
+      const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.msg || 'Failed to resend OTP');
-      Alert.alert('OTP Resent', 'Please check your email for the new code.');
+      if (!res.ok) {
+        const errorMsg = data?.message || data?.msg || data?.error || 'Failed to resend reset code';
+        console.error('[ResetOtpScreen] Resend error:', data);
+        throw new Error(errorMsg);
+      }
+      Alert.alert('Reset Code Resent', 'Please check your email for the new code.');
       setCooldown(60);
     } catch (err) {
-      Alert.alert('Error', err.message || 'Failed to resend OTP');
+      console.error('[ResetOtpScreen] Resend network error:', err);
+      Alert.alert('Error', err.message || 'Failed to resend reset code. Please check your internet connection.');
     } finally {
       setResending(false);
     }
@@ -91,20 +130,19 @@ export default function ResetOtpScreen({ navigation, route }) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Enter OTP</Text>
-      <Text style={styles.subtitle}>We sent a code to: {email}</Text>
+      <Text style={styles.subtitle}>We sent a reset code to: {email}</Text>
 
       <TextInput
-        label="6-digit OTP"
+        label="Reset Code"
         value={otp}
         onChangeText={setOtp}
-        keyboardType="number-pad"
-        maxLength={6}
+        keyboardType="default"
         style={styles.input}
         textColor="#fff"
       />
 
       <Button mode="contained" onPress={handleVerifyOtp} loading={loading}>
-        {loading ? "Verifying..." : "Verify OTP"}
+        {loading ? "Verifying..." : "Verify Code"}
       </Button>
 
       <View style={{ marginTop: 12, alignItems: 'center' }}>

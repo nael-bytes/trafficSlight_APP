@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,9 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "react-native";
+import { useUser } from "../../AuthContext/UserContextImproved";
+import { fetchUserMotors } from "../../utils/api";
+import Toast from 'react-native-toast-message';
 
 type RootStackParamList = {
   MotorList: { fullList: any[] };
@@ -26,16 +29,49 @@ type Props = {
 
 export default function MotorListScreen({ route }: Props) {
   const navigation = useNavigation();
-  const { fullList } = route.params;
+  const { fullList: initialFullList } = route.params;
+  const { user } = useUser();
   const [refreshing, setRefreshing] = useState(false);
+  const [motors, setMotors] = useState(initialFullList || []);
+  const [loading, setLoading] = useState(false);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    // Simulate refresh
-    setTimeout(() => {
+  // Fetch motors from API
+  const fetchMotors = useCallback(async () => {
+    if (!user?._id) return;
+
+    try {
+      setLoading(true);
+      const data = await fetchUserMotors(user._id);
+      
+      // Handle different response formats
+      const motorsList = Array.isArray(data) 
+        ? data 
+        : data?.motors || data?.data || [];
+      
+      setMotors(motorsList);
+      
+      if (__DEV__) {
+        console.log('[MotorList] Fetched motors:', motorsList.length);
+      }
+    } catch (error: any) {
+      if (__DEV__) {
+        console.error('[MotorList] Error fetching motors:', error);
+      }
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to refresh motors. Please try again.',
+      });
+    } finally {
+      setLoading(false);
       setRefreshing(false);
-    }, 1000);
-  };
+    }
+  }, [user?._id]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchMotors();
+  }, [fetchMotors]);
 
   const renderMotorItem = ({ item }: { item: any }) => {
     return (
@@ -93,9 +129,14 @@ export default function MotorListScreen({ route }: Props) {
       </LinearGradient>
 
       <View style={styles.content}>
-        {fullList && fullList.length > 0 ? (
+        {loading && motors.length === 0 ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#00ADB5" />
+            <Text style={styles.loadingText}>Loading motors...</Text>
+          </View>
+        ) : motors && motors.length > 0 ? (
           <FlatList
-            data={fullList}
+            data={motors}
             keyExtractor={(item, index) => item._id || index.toString()}
             renderItem={renderMotorItem}
             refreshControl={
@@ -218,6 +259,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#999",
     marginTop: 8,
+    textAlign: "center",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 40,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: "#666",
+    marginTop: 16,
     textAlign: "center",
   },
 });

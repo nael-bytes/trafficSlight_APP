@@ -17,6 +17,8 @@ import tw from "twrnc";
 import axios from "axios";
 import { useUser } from "../../AuthContext/UserContextImproved";
 import { LOCALHOST_IP } from "@env";
+import { updateUserProfile } from "../../utils/api";
+import ChangePasswordModal from "../../components/ChangePasswordModal";
 
 const API_BASE = 'https://ts-backend-1-jyit.onrender.com';
 
@@ -30,6 +32,7 @@ const barangays = [
 export default function AccountSettingsScreen({ navigation }) {
   const { user, saveUser, clearUser } = useUser();
   const [barangayModal, setBarangayModal] = useState(false);
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
 
   const [form, setForm] = useState({
     name: "",
@@ -42,14 +45,21 @@ export default function AccountSettingsScreen({ navigation }) {
 
   useEffect(() => {
     if (user) {
+      // Handle name field - could be 'name' or 'firstName' + 'lastName'
+      const userName = user.name || 
+        (user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : '') ||
+        user.firstName || 
+        user.lastName || 
+        '';
+      
       setForm({
-        id: user._id, // 👈 Include this
-        name: user.name,
-        email: user.email,
-        city: user.city,
-        province: user.province,
-        barangay: user.barangay,
-        street: user.street,
+        id: user._id,
+        name: userName,
+        email: user.email || '',
+        city: user.city || '',
+        province: user.province || '',
+        barangay: user.barangay || '',
+        street: user.street || '',
       });
     }
   }, [user]);
@@ -60,17 +70,25 @@ export default function AccountSettingsScreen({ navigation }) {
 
   const handleSave = async () => {
     try {
-      const res = await axios.put(`${LOCALHOST_IP}/api/auth/update-profile`, form, {
-        headers: {
-          Authorization: `Bearer ${user?.token}`,
-        },
+      // Uses: PUT /api/users/profile (as per FRONTEND_IMPLEMENTATION_GUIDE.md)
+      // Using updateUserProfile from utils/api.ts which handles authentication automatically
+      const updatedUser = await updateUserProfile({
+        firstName: form.name?.split(' ')[0] || form.name,
+        lastName: form.name?.split(' ').slice(1).join(' ') || '',
+        email: form.email,
+        city: form.city,
+        province: form.province,
+        barangay: form.barangay,
+        street: form.street,
       });
 
       Alert.alert("Success", "Profile updated successfully");
-      saveUser({ ...user, ...res.data.user });
+      // Handle response - could be direct user object or wrapped in { user: {...} }
+      const userData = updatedUser?.user || updatedUser;
+      saveUser({ ...user, ...userData });
     } catch (err) {
       console.error("Update error:", err);
-      Alert.alert("Error", err?.response?.data?.msg || "Update failed");
+      Alert.alert("Error", err?.message || "Update failed");
     }
   };
 
@@ -182,6 +200,26 @@ export default function AccountSettingsScreen({ navigation }) {
             </LinearGradient>
           </TouchableOpacity>
 
+          {/* Change Password Section */}
+          <View style={tw`mt-6 pt-6 border-t border-gray-200`}>
+            <Text style={tw`text-lg font-semibold text-gray-800 mb-4`}>Security</Text>
+            
+            {/* Change Password with Current Password or OTP */}
+            <TouchableOpacity
+              style={tw`bg-blue-50 border border-blue-200 rounded-xl p-4 flex-row items-center justify-between`}
+              onPress={() => setShowChangePasswordModal(true)}
+            >
+              <View style={tw`flex-row items-center`}>
+                <Ionicons name="shield-checkmark-outline" size={24} color="#3B82F6" />
+                <View style={tw`ml-3`}>
+                  <Text style={tw`text-base font-semibold text-gray-800`}>Change Password</Text>
+                  <Text style={tw`text-sm text-gray-600`}>Change with current password or OTP</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            </TouchableOpacity>
+          </View>
+
           {/* Logout Button */}
           <TouchableOpacity
             style={tw`mt-4 bg-red-500 p-4 rounded-xl flex-row items-center justify-center`}
@@ -224,6 +262,15 @@ export default function AccountSettingsScreen({ navigation }) {
           </ScrollView>
         </Modal>
       </Portal>
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        visible={showChangePasswordModal}
+        onClose={() => {
+          setShowChangePasswordModal(false);
+        }}
+        userEmail={user?.email}
+      />
     </SafeAreaView>
   );
 }

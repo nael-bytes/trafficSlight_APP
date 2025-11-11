@@ -5,6 +5,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { locationPermissionManager } from './locationPermissionManager';
+import { checkGPSServiceStatus, GPSServiceStatus } from './location';
 
 const LOCATION_CACHE_KEY = 'user_current_location';
 const LOCATION_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -83,10 +84,32 @@ export async function getCurrentLocationWithCache(
       }
     }
 
-    // Get fresh location
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
+    // CRITICAL: Check GPS service status with retry mechanism and better error handling
+    const gpsCheck = await checkGPSServiceStatus(3, 2000, 5000);
+    
+    if (!gpsCheck.isAvailable && !gpsCheck.canAttemptLocation) {
+      // GPS is disabled - cannot proceed
+      console.error('[LocationCache]', gpsCheck.message);
+      throw new Error(`LOCATION_SERVICES_DISABLED: ${gpsCheck.message}`);
+    }
+    
+    // If GPS is acquiring signal but we can still attempt, use longer timeout
+    const locationTimeout = gpsCheck.status === GPSServiceStatus.ACQUIRING ? 20000 : 15000;
+    
+    if (gpsCheck.status === GPSServiceStatus.ACQUIRING) {
+      console.warn('[LocationCache] GPS is acquiring signal, using longer timeout:', gpsCheck.message);
+    }
+
+    // Get fresh location with timeout
+    // Use Promise.race for timeout handling since timeout option might not be available
+    const location = await Promise.race([
+      Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      }),
+      new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Location request timed out')), locationTimeout)
+      ),
+    ]);
 
     const newLocation: CachedLocation = {
       latitude: location.coords.latitude,
@@ -98,14 +121,35 @@ export async function getCurrentLocationWithCache(
     await cacheLocation(newLocation);
 
     return newLocation;
-  } catch (error) {
-    console.error('[LocationCache] Failed to get current location:', error);
+  } catch (error: any) {
+    // Check for specific error types
+    const errorMessage = error?.message || error?.toString() || 'Unknown error';
     
-    // Try to return cached location as fallback
+    if (errorMessage.includes('LOCATION_SERVICES_DISABLED')) {
+      console.error('[LocationCache] Location services disabled:', error);
+    } else if (errorMessage.includes('permission') || errorMessage.includes('Permission')) {
+      console.error('[LocationCache] Permission error:', error);
+    } else if (errorMessage.includes('unavailable') || errorMessage.includes('timeout')) {
+      console.error('[LocationCache] Location unavailable or timeout:', error);
+      console.warn('[LocationCache] This might mean GPS signal is weak or not acquired yet. Try:');
+      console.warn('[LocationCache] 1. Move to an area with better GPS signal (outdoors, away from buildings)');
+      console.warn('[LocationCache] 2. Wait a few moments for GPS to acquire signal');
+      console.warn('[LocationCache] 3. Check if device is in airplane mode');
+      console.warn('[LocationCache] 4. Ensure location services are enabled in device settings');
+    } else {
+      console.error('[LocationCache] Failed to get current location:', error);
+    }
+    
+    // Try to return cached location as fallback (even if expired)
     const cached = await getCachedLocation();
     if (cached) {
       console.log('[LocationCache] Returning cached location as fallback');
       return cached;
+    }
+    
+    // If no cache and error is not a permission issue, throw the error with helpful message
+    if (errorMessage.includes('LOCATION_SERVICES_DISABLED')) {
+      throw new Error('Location services (GPS) are disabled. Please enable GPS in your device settings.');
     }
     
     return null;

@@ -12,9 +12,10 @@ import {
   StyleSheet,
 } from "react-native";
 import Ionicons from "react-native-vector-icons/Ionicons";
-import { LOCALHOST_IP, GOOGLE_MAPS_API_KEY } from "@env";
+import { GOOGLE_MAPS_API_KEY } from "@env";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetchReports as fetchReportsAPI, apiRequest } from "../../utils/api";
 
 const CACHE_KEY = "cachedReports";
 
@@ -28,11 +29,16 @@ export default function TrafficReportsScreen({ navigation }) {
     try {
       const cached = await AsyncStorage.getItem(CACHE_KEY);
       if (cached) {
-        setReports(JSON.parse(cached));
+        const parsedData = JSON.parse(cached);
+        // CRITICAL: Ensure parsed data is always an array
+        const reportsArray = Array.isArray(parsedData) ? parsedData : [];
+        setReports(reportsArray);
         setLoading(false); // show cached instantly
       }
     } catch (err) {
       console.warn("Failed to load cached reports:", err);
+      // Set empty array on error to prevent undefined state
+      setReports([]);
     }
   };
 
@@ -47,13 +53,18 @@ export default function TrafficReportsScreen({ navigation }) {
 
   const fetchReports = async () => {
     try {
-      const response = await fetch(`${LOCALHOST_IP}/api/reports`);
-      const data = await response.json();
+      // CRITICAL: Use centralized API function for consistency with rest of app
+      // This ensures we use the same base URL and authentication as other API calls
+      const data = await fetchReportsAPI();
 
-      setReports(data);
-      cacheReports(data); // ✅ cache the fresh reports
+      // CRITICAL: Ensure data is always an array
+      const reportsArray = Array.isArray(data) ? data : [];
+      setReports(reportsArray);
+      cacheReports(reportsArray); // ✅ cache the fresh reports
     } catch (error) {
       console.error("❌ Failed to fetch reports", error);
+      // Set empty array on error to prevent undefined state
+      setReports([]);
     } finally {
       setLoading(false);
     }
@@ -66,17 +77,20 @@ export default function TrafficReportsScreen({ navigation }) {
         body.address = address;
       }
   
-      await fetch(`${LOCALHOST_IP}/api/reports/${reportId}`, {
+      // CRITICAL: Use centralized API function for consistency
+      // This ensures we use the same base URL and authentication as other API calls
+      await apiRequest(`/api/reports/${reportId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
   
-      console.log(
-        body.address
-          ? `✅ Report ${reportId} updated with address: ${body.address}`
-          : `⚠️ Report ${reportId} not updated (no address provided)`
-      );
+      if (__DEV__) {
+        console.log(
+          body.address
+            ? `✅ Report ${reportId} updated with address: ${body.address}`
+            : `⚠️ Report ${reportId} not updated (no address provided)`
+        );
+      }
     } catch (err) {
       console.error("❌ Failed to update report address:", err);
     }
@@ -120,17 +134,27 @@ export default function TrafficReportsScreen({ navigation }) {
           setAddress(addr);
           // optionally update server & cache
           report.address = addr;
-          cacheReports([...reports]);
-          updateReportAddress(report._id,address)
+          // CRITICAL: Ensure reports is an array before spreading
+          if (Array.isArray(reports)) {
+            cacheReports([...reports]);
+          }
+          updateReportAddress(report._id, address);
         });
       }
     }, []);
 
     // Get vote counts and verification status
-    const upvotes = report.upvotes || 0;
-    const downvotes = report.downvotes || 0;
+    // CRITICAL: API returns votes as an array: [{ userId, vote: 1 or -1 }]
+    // Calculate upvotes (vote === 1) and downvotes (vote === -1) from the votes array
+    const votesArray = report.votes || [];
+    const upvotes = votesArray.filter((v: any) => v.vote === 1).length;
+    const downvotes = votesArray.filter((v: any) => v.vote === -1).length;
     const totalVotes = upvotes + downvotes;
-    const isVerified = report.isVerified || false;
+    // Alternative: Calculate totalVotes as sum of all votes (net votes)
+    // const totalVotes = votesArray.reduce((sum: number, v: any) => sum + (v.vote || 0), 0);
+    
+    // Check verification status - API uses verified.verifiedByAdmin or verified.verifiedByUser
+    const isVerified = (report.verified?.verifiedByAdmin > 0) || (report.verified?.verifiedByUser > 0) || false;
     const voteRatio = totalVotes > 0 ? (upvotes / totalVotes) * 100 : 0;
 
     return (
@@ -175,10 +199,11 @@ export default function TrafficReportsScreen({ navigation }) {
     );
   };
 
-  const filtered = reports.filter(
+  // CRITICAL: Ensure reports is always an array before filtering
+  const filtered = (reports || []).filter(
     (r) =>
-      r.reportType.toLowerCase().includes(search.toLowerCase()) ||
-      r.description?.toLowerCase().includes(search.toLowerCase())
+      r?.reportType?.toLowerCase().includes(search.toLowerCase()) ||
+      r?.description?.toLowerCase().includes(search.toLowerCase())
   );
 
   return (

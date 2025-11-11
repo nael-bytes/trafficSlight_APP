@@ -5,7 +5,7 @@ import { LOCALHOST_IP } from "@env";
 
 export default function NewPasswordScreen({ navigation, route }) {
   const email = route.params?.email;
-  const otp = route.params?.otp;
+  const token = route.params?.token || route.params?.otp; // Support both token and otp for backward compatibility
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -37,22 +37,32 @@ export default function NewPasswordScreen({ navigation, route }) {
 
     setLoading(true);
     try {
-      const res = await fetch(`${LOCALHOST_IP}/api/auth/reset-password`, {
+      // Uses: POST /api/auth/reset-password-with-otp (as per USER_FRONTEND_IMPLEMENTATION_GUIDE.md)
+      // Parameters: email, otpCode, newPassword
+      if (!token) {
+        Alert.alert("Error", "Reset token is missing. Please start the reset process again.");
+        navigation.navigate("ForgotPassword");
+        return;
+      }
+
+      // Use API_BASE or LOCALHOST_IP depending on what's configured
+      const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+      const res = await fetch(`${API_BASE}/api/auth/reset-password-with-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp, newPassword }),
+        body: JSON.stringify({ email, otpCode: token, newPassword }),
       });
 
       const data = await res.json();
       if (res.ok) {
-        Alert.alert("Success", "Password reset. You can now log in.", [
+        Alert.alert("Success", "Password changed successfully. You can now log in.", [
           {
             text: "Go to Login",
             onPress: () => navigation.navigate("Login"),
           },
         ]);
       } else {
-        Alert.alert("Error", data?.msg || "Failed to reset password.");
+        Alert.alert("Error", data?.message || data?.msg || "Failed to change password.");
       }
     } catch (err) {
       Alert.alert("Error", "Something went wrong.");

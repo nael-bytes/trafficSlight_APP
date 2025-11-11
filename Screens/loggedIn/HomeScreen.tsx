@@ -1,31 +1,29 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
   FlatList,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
-  LayoutAnimation,
-  RefreshControl,
   Image,
   StatusBar,
   useColorScheme,
   SafeAreaView,
+  RefreshControl,
 } from "react-native";
-import axios from "axios";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Location from "expo-location";
 import { useUser } from "../../AuthContext/UserContextImproved";
+import { fetchUserMotors, apiRequest } from "../../utils/api";
+import { combineFuelData as combineFuelDataService } from "../../services/fuelService";
+import { LOCALHOST_IP } from "@env";
 
-// ====== Replace this with your real auth user (useUser) ======
+const API_BASE = LOCALHOST_IP;
+import { deepEqual } from '../../utils/objectUtils';
 
-// ============================================================
-
-
-const API_BASE = "https://ts-backend-1-jyit.onrender.com";
+const HOME_CACHE_KEY = 'home_screen_data';
+const FETCH_INTERVAL = 5000; // 5 seconds
 
 type SectionDef = {
   title: string;
@@ -37,13 +35,67 @@ type SectionDef = {
   showSeeAll?: boolean;
 };
 
+interface HomeDataCache {
+  motors: any[];
+  trips: any[];
+  fuelLogs: any[];
+  maintenanceRecords: any[];
+  combinedFuelData: any[];
+  timestamp: number;
+}
+
+// COMMENTED OUT: Complex data processing - replaced with simple fallback
+// Helper function to combine fuel logs with maintenance refuels
+// const combineFuelData = async (fuelLogs: any[], maintenanceRecords: any[]): Promise<any[]> => {
+//   try {
+//     const maintenanceRefuels = maintenanceRecords.filter((record: any) => record.type === 'refuel');
+//     const transformedMaintenanceRefuels = maintenanceRefuels.map((record: any) => ({
+//       _id: `maintenance_${record._id}`,
+//       date: record.timestamp,
+//       liters: record.details?.quantity,
+//       pricePerLiter: record.details?.cost && record.details?.quantity 
+//         ? record.details.cost / record.details.quantity 
+//         : 0,
+//       totalCost: record.details?.cost,
+//       odometer: undefined,
+//       notes: record.details?.notes,
+//       motorId: record.motorId ? {
+//         _id: record.motorId._id,
+//         nickname: record.motorId.nickname,
+//         motorcycleId: undefined
+//       } : undefined,
+//       location: record.location ? `${record.location.latitude}, ${record.location.longitude}` : undefined,
+//       source: 'maintenance'
+//     }));
+//
+//     const combined = [
+//       ...fuelLogs.map((log: any) => ({ ...log, source: 'fuel_log' })), 
+//       ...transformedMaintenanceRefuels
+//     ];
+//     
+//     return combined.sort((a: any, b: any) => {
+//       const dateA = new Date(a.date || 0).getTime();
+//       const dateB = new Date(b.date || 0).getTime();
+//       return dateB - dateA;
+//     });
+//   } catch (error) {
+//     console.error('[HomeScreen] Error combining fuel data:', error);
+//     return fuelLogs || [];
+//   }
+// };
+
+// SIMPLE FALLBACK: Just return fuel logs as-is
+const combineFuelData = async (fuelLogs: any[], maintenanceRecords: any[]): Promise<any[]> => {
+  return fuelLogs || [];
+};
+
 const renderItemLabel = (item: any, type: string) => {
   switch (type) {
     case "Motors":
       return {
-        line1: item.nickname || item.motorcycleData?.name || "Motorcycle",
+        line1: `${item.nickname || item.motorcycleData?.name || "Motorcycle"} • ${item.name || "Unknown Models"}`,
         line2: item.fuelEfficiency || item.fuelConsumption ? `${item.fuelEfficiency || item.fuelConsumption} km/L` : "Fuel Efficiency Unknown",
-        line3: `Fuel: ${item.currentFuelLevel?.toFixed(0) || 0}% • ${item.motorcycleData?.name || "Unknown Model"}`,
+        line3: `Fuel: ${item.currentFuelLevel?.toFixed(0) || 0}% `,
       };
     case "Trips":
       const maintenanceText = item.maintenanceActions?.length
@@ -70,7 +122,7 @@ const renderItemLabel = (item: any, type: string) => {
       const isMaintenance = item.source === 'maintenance';
       const sourceIndicator = isMaintenance ? " (Maintenance)" : "";
       return {
-        line1: `₱${(item.totalCost ?? "--").toFixed?.() ?? (typeof item.cost === "number" ? item.cost.toFixed(2) : "--")}${sourceIndicator}`,
+        line1: `₱${typeof item.totalCost === "number" ? item.totalCost.toFixed(2) : (typeof item.cost === "number" ? item.cost.toFixed(2) : "--")}${sourceIndicator}`,
         line2: `${item.liters?.toFixed(1) ?? "--"} Liters${fuelLocation}`,
         line3: item.date ? new Date(item.date).toLocaleString("en-PH", {
           hour: "2-digit", minute: "2-digit", hour12: true, month: "long", day: "numeric"
@@ -96,7 +148,6 @@ const getImageForSection = (title: string, description?: string, item?: any) => 
     case "Motors":
       return require("../../assets/icons/motor-silhouette.png");
     case "Fuel Logs":
-      // Use maintenance icon for maintenance refuels, gas station for regular fuel logs
       if (item?.source === 'maintenance') {
         return require("../../assets/icons/maintenance.png");
       }
@@ -114,21 +165,6 @@ const getImageForSection = (title: string, description?: string, item?: any) => 
       }
     default:
       return require("../../assets/icons/default.png");
-  }
-};
-
-const getCurrentLocation = async () => {
-  try {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== "granted") {
-      console.warn("Location permission denied");
-      return null;
-    }
-    const loc = await Location.getCurrentPositionAsync({});
-    return loc.coords;
-  } catch (err) {
-    console.warn("Failed to get location:", err);
-    return null;
   }
 };
 
@@ -190,25 +226,18 @@ const Section = ({
           renderItem={({ item }) => {
             try {
               const label = renderItemLabel(item, title);
-              console.log(`[HomeScreen] Rendering ${title} item:`, {
-                itemKeys: Object.keys(item),
-                label,
-                hasImage: !!getImageForSection(title, (item as any).type || (item as any).details?.type)
-              });
               
               return (
                 <TouchableOpacity
                   style={[styles.item, isDarkMode && styles.itemDark]}
                   onPress={() => {
                     if (navTarget) {
-                      // For maintenance items, pass the item for detailed view
                       if (title === "Maintenance") {
                         navigation.navigate(navTarget as any, { 
                           item, 
                           showSingleItem: true 
                         });
                       } else {
-                        // For other sections, pass the item normally
                         navigation.navigate(navTarget as any, { item });
                       }
                     }
@@ -247,201 +276,288 @@ export default function MotorPage() {
   const systemTheme = useColorScheme();
   const [isManualDark, setIsManualDark] = useState<boolean | null>(null);
   const isDarkMode = isManualDark ?? (systemTheme === "dark");
-
-
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const [motors, setMotors] = useState<any[]>([]);
-  const [trips, setTrips] = useState<any[]>([]);
-  const [destinations, setDestinations] = useState<any[]>([]);
-  const [fuelLogs, setFuelLogs] = useState<any[]>([]);
-  const [maintenanceRecords, setMaintenanceRecords] = useState<any[]>([]);
-  const [gasStations, setGasStations] = useState<any[]>([]);
-  const [combinedFuelData, setCombinedFuelData] = useState<any[]>([]);
   const navigation = useNavigation<any>();
   const { user } = useUser();
 
-  // Function to combine fuel logs with maintenance refuels only
-  const combineFuelData = (fuelLogs: any[], maintenanceRecords: any[]) => {
-    // Filter maintenance records for refuel type only
-    const maintenanceRefuels = maintenanceRecords.filter((record: any) => record.type === 'refuel');
-    
-    // Transform maintenance refuels to match fuel log format
-    const transformedMaintenanceRefuels = maintenanceRefuels.map((record: any) => ({
-      _id: `maintenance_${record._id}`,
-      date: record.timestamp,
-      liters: record.details.quantity,
-      pricePerLiter: record.details.cost / record.details.quantity,
-      totalCost: record.details.cost,
-      odometer: undefined, // Maintenance records don't have odometer
-      notes: record.details.notes,
-      motorId: {
-        _id: record.motorId._id,
-        nickname: record.motorId.nickname,
-        motorcycleId: undefined
-      },
-      location: record.location ? `${record.location.latitude}, ${record.location.longitude}` : undefined,
-      source: 'maintenance'
-    }));
+  // State for all data types
+  const [motors, setMotors] = useState<any[]>([]);
+  const [trips, setTrips] = useState<any[]>([]);
+  const [fuelLogs, setFuelLogs] = useState<any[]>([]);
+  const [maintenanceRecords, setMaintenanceRecords] = useState<any[]>([]);
+  const [combinedFuelData, setCombinedFuelData] = useState<any[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // Refs
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isFetchingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
 
-    // Combine both data sources
-    const combined = [
-      ...fuelLogs.map((log: any) => ({ ...log, source: 'fuel_log' })), 
-      ...transformedMaintenanceRefuels
-    ];
-    
-    // Sort by date (newest first)
-    return combined.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  };
-
-  // load cached
+  // Load cached data on mount (instant display)
   useEffect(() => {
-    if (!user || !user._id) return;
-  
-    const loadCached = async () => {
+    const loadCachedData = async () => {
       try {
-        const [
-          cachedMotors,
-          cachedTrips,
-          cachedDestinations,
-          cachedFuelLogs,
-          cachedMaintenance,
-          cachedGas,
-        ] = await Promise.all([
-          AsyncStorage.getItem(`cachedMotors_${user._id}`),
-          AsyncStorage.getItem(`cachedTrips_${user._id}`),
-          AsyncStorage.getItem(`cachedDestinations_${user._id}`),
-          AsyncStorage.getItem(`cachedFuelLogs_${user._id}`),
-          AsyncStorage.getItem(`cachedMaintenance_${user._id}`),
-          AsyncStorage.getItem(`cachedGasStations_${user._id}`),
-        ]);
-  
-        if (cachedMotors) setMotors(JSON.parse(cachedMotors));
-        if (cachedTrips)
-          setTrips(JSON.parse(cachedTrips).sort(
-            (a: any, b: any) => new Date(b.tripStartTime || b.date || 0).getTime() - new Date(a.tripStartTime || a.date || 0).getTime()
-          ));
-        if (cachedDestinations) setDestinations(JSON.parse(cachedDestinations));
-        
-        let fuelLogsData = [];
-        let maintenanceData = [];
-        
-        if (cachedFuelLogs) {
-          fuelLogsData = JSON.parse(cachedFuelLogs).sort(
-            (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-          );
-          setFuelLogs(fuelLogsData);
+        const cachedDataStr = await AsyncStorage.getItem(`${HOME_CACHE_KEY}_${user?._id}`);
+        if (cachedDataStr) {
+          const cachedData: HomeDataCache = JSON.parse(cachedDataStr);
+          setMotors(cachedData.motors || []);
+          setTrips(cachedData.trips || []);
+          setFuelLogs(cachedData.fuelLogs || []);
+          setMaintenanceRecords(cachedData.maintenanceRecords || []);
+          setCombinedFuelData(cachedData.combinedFuelData || []);
+          if (__DEV__) {
+            console.log("[HomeScreen] Loaded cached data");
+          }
         }
-        
-        if (cachedMaintenance) {
-          maintenanceData = JSON.parse(cachedMaintenance).sort(
-            (a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
-          );
-          setMaintenanceRecords(maintenanceData);
+      } catch (error) {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to load cached data:", error);
         }
-        
-        // Combine fuel logs with maintenance refuels only
-        const combined = combineFuelData(fuelLogsData, maintenanceData);
-        setCombinedFuelData(combined);
-        
-        if (cachedGas) setGasStations(JSON.parse(cachedGas));
-  
-        console.log("✅ Cached data restored for user:", user._id);
-      } catch (err) {
-        console.warn("Failed to load cache:", err);
-      } finally {
-        setLoading(false);
       }
     };
-  
-    loadCached();
-  }, [user?._id]);
-  
 
-  // fetch all
-  const fetchAllData = async () => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setLoading(true);
+    if (user?._id) {
+      loadCachedData();
+    }
+  }, [user?._id]);
+
+  // COMMENTED OUT: Complex data processing - replaced with simple fallback
+  // Fetch all data from backend
+  // const fetchAllData = useCallback(async (isManualRefresh = false) => {
+  //   ... (entire complex fetch logic commented out)
+  // }, [user?._id]);
+
+  // Fetch all data from backend API endpoints
+  // Uses: GET /api/user-motors/user/:userId, GET /api/trips/user/:userId, GET /api/fuel-logs/:userId, GET /api/maintenance-records/user/:userId
+  const fetchAllData = useCallback(async (isManualRefresh = false) => {
+    if (!user?._id) return;
     
+    // Prevent concurrent fetches
+    if (isFetchingRef.current && !isManualRefresh) {
+      if (__DEV__) {
+        console.log("[HomeScreen] Fetch already in progress, skipping");
+      }
+      return;
+    }
+    
+    isFetchingRef.current = true;
     
     try {
-      const coords = await getCurrentLocation();
-      // you can use coords to call nearby gasstations endpoint if you have it
-      const [motorsRes, tripsRes, destinationsRes, logsRes, maintenanceRes, gasRes] =
-        await Promise.all([
-          axios.get(`${API_BASE}/api/user-motors/user/${user._id}`).catch(() => ({ data: [] })),
-          axios.get(`${API_BASE}/api/trips/user/${user._id}`).catch(() => ({ data: [] })),
-          axios.get(`${API_BASE}/api/saved-destinations/${user._id}`).catch(() => ({ data: [] })),
-          axios.get(`${API_BASE}/api/fuel-logs/${user._id}`).catch(() => ({ data: [] })),
-          axios.get(`${API_BASE}/api/maintenance-records/user/${user._id}`).catch(() => ({ data: [] })),
-          axios.get(`${API_BASE}/api/gas-stations`).catch(() => ({ data: [] })),
-        ]);
-    
-      // 🔹 Update state with logging
-      console.log('[HomeScreen] Fetched data:', {
-        motors: motorsRes.data?.length || 0,
-        trips: tripsRes.data?.length || 0,
-        destinations: destinationsRes.data?.length || 0,
-        fuelLogs: logsRes.data?.length || 0,
-        maintenance: maintenanceRes.data?.length || 0,
-        gasStations: gasRes.data?.length || 0
-      });
-
-      setMotors(motorsRes.data || []);
-      setTrips(
-        (tripsRes.data || []).sort(
-          (a: any, b: any) => new Date(b.tripStartTime || b.date || 0).getTime() - new Date(a.tripStartTime || a.date || 0).getTime()
-        )
-      );
-      setDestinations(destinationsRes.data || []);
-      setFuelLogs(
-        (logsRes.data || []).sort(
-          (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-        )
-      );
-      const maintenanceData = (maintenanceRes.data || []).sort(
-        (a: any, b: any) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
-      );
-      setMaintenanceRecords(maintenanceData);
-      setGasStations(gasRes.data || []);
-
-      // Combine fuel logs with maintenance refuels only
-      const combined = combineFuelData(logsRes.data || [], maintenanceData);
-      setCombinedFuelData(combined);
-    
-      // 🔹 Cache everything
-      await AsyncStorage.multiSet([
-        [`cachedMotors_${user._id}`, JSON.stringify(motorsRes.data || [])],
-        [`cachedTrips_${user._id}`, JSON.stringify(tripsRes.data || [])],
-        [`cachedDestinations_${user._id}`, JSON.stringify(destinationsRes.data || [])],
-        [`cachedFuelLogs_${user._id}`, JSON.stringify(logsRes.data || [])],
-        [`cachedMaintenance_${user._id}`, JSON.stringify(maintenanceRes.data || [])],
-        [`cachedGasStations_${user._id}`, JSON.stringify(gasRes.data || [])],
-      ]);
-    } catch (err) {
-      console.error("🔥 Unexpected Fetch Error:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  // silent fetch on focus
-  useFocusEffect(
-    useCallback(() => {
-      if (user && user._id) {
-        fetchAllData();
+      // Abort previous request if still pending
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-    }, [user])
-  );
+      
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+      
+      // Fetch all data concurrently from backend API endpoints
+      // All data processing happens on backend, not locally
+      const [motorsResult, tripsResult, fuelLogsResult, maintenanceResult] = await Promise.allSettled([
+        // Fetch motors: GET /api/user-motors/user/:userId
+        fetchUserMotors(user._id, signal).then(res => {
+          // Handle different response formats
+          if (Array.isArray(res)) return res;
+          if (res?.motors) return res.motors;
+          if (res?.data) return Array.isArray(res.data) ? res.data : [];
+          return [];
+        }),
+        
+        // Fetch trips: GET /api/trips/user/:userId
+        apiRequest(`/api/trips/user/${user._id}`, { signal }).then(res => {
+          if (Array.isArray(res)) return res;
+          if (res?.trips) return res.trips;
+          if (res?.data) return Array.isArray(res.data) ? res.data : [];
+          return [];
+        }),
+        
+        // Fetch fuel logs: GET /api/fuel-logs/:userId
+        apiRequest(`/api/fuel-logs/${user._id}`, { signal }).then(res => {
+          if (Array.isArray(res)) return res;
+          if (res?.fuelLogs) return res.fuelLogs;
+          if (res?.data) return Array.isArray(res.data) ? res.data : [];
+          return [];
+        }),
+        
+        // Fetch maintenance records: GET /api/maintenance-records/user/:userId
+        apiRequest(`/api/maintenance-records/user/${user._id}`, { signal }).then(res => {
+          if (Array.isArray(res)) return res;
+          if (res?.maintenanceRecords) return res.maintenanceRecords;
+          if (res?.data) return Array.isArray(res.data) ? res.data : [];
+          return [];
+        }),
+      ]);
+      
+      // Extract successful results
+      const motors = motorsResult.status === 'fulfilled' ? motorsResult.value : [];
+      const trips = tripsResult.status === 'fulfilled' ? tripsResult.value : [];
+      const fuelLogs = fuelLogsResult.status === 'fulfilled' ? fuelLogsResult.value : [];
+      const maintenanceRecords = maintenanceResult.status === 'fulfilled' ? maintenanceResult.value : [];
+      
+      // Log errors for failed requests
+      if (motorsResult.status === 'rejected') {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to fetch motors:", motorsResult.reason);
+        }
+      }
+      if (tripsResult.status === 'rejected') {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to fetch trips:", tripsResult.reason);
+        }
+      }
+      if (fuelLogsResult.status === 'rejected') {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to fetch fuel logs:", fuelLogsResult.reason);
+        }
+      }
+      if (maintenanceResult.status === 'rejected') {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to fetch maintenance records:", maintenanceResult.reason);
+        }
+      }
+      
+      // Get combined fuel data from backend API
+      // Uses: GET /api/fuel/combined?userId=user_id
+      let combinedFuelData: any[] = [];
+      try {
+        const combinedResult = await combineFuelDataService(user._id);
+        if (combinedResult?.combinedData) {
+          combinedFuelData = combinedResult.combinedData;
+        } else if (Array.isArray(combinedResult)) {
+          combinedFuelData = combinedResult;
+        } else {
+          // Fallback: use fuel logs only if API fails
+          combinedFuelData = fuelLogs;
+        }
+      } catch (error) {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to fetch combined fuel data, using fuel logs only:", error);
+        }
+        // Fallback to fuel logs if combined API fails
+        combinedFuelData = fuelLogs;
+      }
+      
+      // Update state with fetched data
+      setMotors(motors);
+      setTrips(trips);
+      setFuelLogs(fuelLogs);
+      setMaintenanceRecords(maintenanceRecords);
+      setCombinedFuelData(combinedFuelData);
+      
+      // Cache the fetched data
+      const cacheData: HomeDataCache = {
+        motors,
+        trips,
+        fuelLogs,
+        maintenanceRecords,
+        combinedFuelData,
+        timestamp: Date.now(),
+      };
+      
+      try {
+        await AsyncStorage.setItem(`${HOME_CACHE_KEY}_${user._id}`, JSON.stringify(cacheData));
+        if (__DEV__) {
+          console.log("[HomeScreen] ✅ Data fetched and cached from backend API");
+        }
+      } catch (cacheError) {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to cache data:", cacheError);
+        }
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        if (__DEV__) {
+          console.log("[HomeScreen] Request aborted");
+        }
+        return;
+      }
+      
+      if (__DEV__) {
+        console.error("[HomeScreen] Error fetching data:", error);
+      }
+      
+      // Fallback to cached data on error
+      try {
+        const cachedDataStr = await AsyncStorage.getItem(`${HOME_CACHE_KEY}_${user._id}`);
+        if (cachedDataStr) {
+          const cachedData: HomeDataCache = JSON.parse(cachedDataStr);
+          setMotors(cachedData.motors || []);
+          setTrips(cachedData.trips || []);
+          setFuelLogs(cachedData.fuelLogs || []);
+          setMaintenanceRecords(cachedData.maintenanceRecords || []);
+          setCombinedFuelData(cachedData.combinedFuelData || []);
+          if (__DEV__) {
+            console.log("[HomeScreen] Loaded cached data as fallback");
+          }
+        }
+      } catch (cacheError) {
+        if (__DEV__) {
+          console.warn("[HomeScreen] Failed to load cached data:", cacheError);
+        }
+      }
+    } finally {
+      isFetchingRef.current = false;
+      abortControllerRef.current = null;
+    }
+  }, [user?._id]);
 
-  const onRefresh = () => {
+  // Initial fetch on mount
+  useEffect(() => {
+    if (user?._id) {
+      fetchAllData(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?._id]); // Only depend on user._id, not fetchAllData to prevent re-fetches
+
+  // COMMENTED OUT: 5-second polling interval
+  // Set up 5-second interval to fetch and compare
+  // useEffect(() => {
+  //   if (!user?._id) return;
+  //   
+  //   // Start interval
+  //   intervalRef.current = setInterval(() => {
+  //     fetchAllData(false);
+  //   }, FETCH_INTERVAL);
+  //
+  //   // Cleanup on unmount
+  //   return () => {
+  //     if (intervalRef.current) {
+  //       clearInterval(intervalRef.current);
+  //       intervalRef.current = null;
+  //     }
+  //     if (abortControllerRef.current) {
+  //       abortControllerRef.current.abort();
+  //       abortControllerRef.current = null;
+  //     }
+  //   };
+  // }, [user?._id, fetchAllData]);
+
+  // Simple cleanup on unmount (fallback mode)
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Manual refresh handler
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchAllData();
-  };
+    fetchAllData(true).finally(() => {
+      setRefreshing(false);
+    });
+  }, [fetchAllData]);
 
-  const sections: SectionDef[] = [
+  // Memoized sections
+  const sections: SectionDef[] = useMemo(() => [
     {
       title: "Motors",
       subtitle: "Registered Vehicles",
@@ -466,10 +582,10 @@ export default function MotorPage() {
       text: "Track your motorcycle maintenance.",
       data: maintenanceRecords,
       navTarget: "MaintenanceDetails",
-      onAdd: () => navigation.navigate("AddMaintenanceScreen"), // Fixed: Added onAdd function
+      onAdd: () => navigation.navigate("AddMaintenanceScreen"),
       showSeeAll: true,
     },
-  ];
+  ], [motors, combinedFuelData, maintenanceRecords, navigation]);
 
   return (
     <SafeAreaView style={[styles.safeArea, isDarkMode && styles.safeAreaDark]}>
@@ -484,7 +600,6 @@ export default function MotorPage() {
         </LinearGradient>
       </View>
 
-      { (
         <FlatList
           data={sections}
           keyExtractor={(s) => s.title}
@@ -500,7 +615,14 @@ export default function MotorPage() {
               isDarkMode={isDarkMode}
             />
           )}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={isDarkMode ? "#00858B" : "#00ADB5"} colors={[isDarkMode ? "#00858B" : "#00ADB5"]} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={isDarkMode ? "#00858B" : "#00ADB5"}
+            colors={[isDarkMode ? "#00858B" : "#00ADB5"]}
+          />
+        }
           ListFooterComponent={
             <TouchableOpacity style={styles.calcBtn} onPress={() => navigation.navigate?.("FuelCalculator")}>
               <LinearGradient colors={isDarkMode ? ["#00858B", "#006A6F"] : ["#00ADB5", "#00C2CC"]} style={styles.calcBtnGradient}>
@@ -510,12 +632,11 @@ export default function MotorPage() {
           }
           contentContainerStyle={[styles.container, isDarkMode && styles.containerDark]}
         />
-      )}
     </SafeAreaView>
   );
 }
 
-/* -------------------- styles (your original styles restored) -------------------- */
+/* -------------------- styles -------------------- */
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -549,38 +670,6 @@ const styles = StyleSheet.create({
     height: 69,
     alignSelf: "center",
     resizeMode: "contain",
-  },
-  scrollableHeader: {
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#333333",
-    textShadowColor: "rgba(0, 0, 0, 0.05)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-    textAlign: "center",
-  },
-  greetingDark: {
-    color: "#FFFFFF",
-    textShadowColor: "rgba(0, 0, 0, 0.2)",
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: "#666",
-    fontWeight: "500",
-  },
-  loadingTextDark: {
-    color: "#AAA",
   },
   calcBtn: {
     marginHorizontal: 16,

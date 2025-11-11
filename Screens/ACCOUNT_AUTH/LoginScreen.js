@@ -17,7 +17,7 @@ import { GOOGLE_CLIENT_ID, LOCALHOST_IP } from "@env";
 import { AuthContext } from "../../AuthContext/AuthContextImproved";
 import { useUser } from "../../AuthContext/UserContextImproved";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { fetchGasStations, fetchReports, fetchUserMotors } from "../../utils/api";
+import { fetchGasStations, fetchReports, fetchUserMotors, fetchUserProfile, configureApi, fetchCompleteUserData, getAuthToken } from "../../utils/api";
 
 const inputTheme = {
   colors: {
@@ -43,28 +43,133 @@ export default function LoginScreen({ navigation }) {
     scopes: ["profile", "email"],
   });
 
-  const { login } = useContext(AuthContext);
+  const { login, getToken } = useContext(AuthContext);
   const { saveUser } = useUser();
 
   const preloadUserData = async (userId) => {
     try {
-      // Fetch in parallel, but don't block UI on failures
-      const [reportsRes, gasRes, motorsRes] = await Promise.allSettled([
-        fetchReports(),
-        fetchGasStations(),
-        fetchUserMotors(userId),
-      ]);
+      // Get token to ensure we have authentication
+      const token = await getToken();
+      if (!token) {
+        if (__DEV__) {
+          console.warn('[LoginScreen] No token available for preload, skipping');
+        }
+        return;
+      }
 
-      if (reportsRes.status === 'fulfilled') {
-        await AsyncStorage.setItem('cachedReports', JSON.stringify(reportsRes.value || []));
+      // Use sharedDataManager to preload all HomeScreen and ProfileScreen data
+      // This fetches motors, trips, destinations, fuel logs, maintenance, gas stations
+      // and caches it properly for immediate use
+      try {
+        if (__DEV__) {
+          console.log('[LoginScreen] Preloading HomeScreen and ProfileScreen data...');
+        }
+        
+        // Preload using sharedDataManager which handles caching automatically
+        await sharedDataManager.fetchAllData(userId, false);
+        
+        if (__DEV__) {
+          console.log('[LoginScreen] Successfully preloaded HomeScreen data');
+        }
+      } catch (sharedDataError) {
+        // Only warn in development, don't throw
+        if (__DEV__ && sharedDataError.message !== 'Authentication required. Please login.') {
+          console.warn('[LoginScreen] SharedDataManager preload failed, trying comprehensive endpoint:', sharedDataError.message);
+        }
+        
+        // Fallback to comprehensive endpoint if sharedDataManager fails
+        try {
+          const completeData = await fetchCompleteUserData();
+          
+          if (completeData) {
+            // Cache all the data from the comprehensive response
+            const dataToCache = {
+              reports: completeData.reports || [],
+              gasStations: completeData.gasStations || [],
+              motors: completeData.motors || [],
+              trips: completeData.trips || [],
+              fuelLogs: completeData.fuelLogs || [],
+              maintenance: completeData.maintenance || [],
+              destinations: completeData.savedDestinations || completeData.destinations || [],
+              notifications: completeData.notifications || [],
+              achievements: completeData.achievements || [],
+              routes: completeData.routes || [],
+              analytics: completeData.analytics || [],
+            };
+
+            // Cache each data type separately for HomeScreen
+            await Promise.allSettled([
+              AsyncStorage.setItem(`reports_${userId}`, JSON.stringify(dataToCache.reports)),
+              AsyncStorage.setItem(`motors_${userId}`, JSON.stringify(dataToCache.motors)),
+              AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(dataToCache.motors)),
+              AsyncStorage.setItem(`trips_${userId}`, JSON.stringify(dataToCache.trips)),
+              AsyncStorage.setItem(`fuelLogs_${userId}`, JSON.stringify(dataToCache.fuelLogs)),
+              AsyncStorage.setItem(`maintenance_${userId}`, JSON.stringify(dataToCache.maintenance)),
+              AsyncStorage.setItem(`destinations_${userId}`, JSON.stringify(dataToCache.destinations)),
+              AsyncStorage.setItem(`gasStations_${userId}`, JSON.stringify(dataToCache.gasStations)),
+            ]);
+
+            // Also cache sharedData cache format for HomeScreen
+            const sharedDataCache = {
+              motors: dataToCache.motors,
+              trips: dataToCache.trips,
+              destinations: dataToCache.destinations,
+              fuelLogs: dataToCache.fuelLogs,
+              maintenanceRecords: dataToCache.maintenance,
+              gasStations: dataToCache.gasStations,
+              combinedFuelData: [],
+              timestamp: Date.now()
+            };
+            await AsyncStorage.setItem(`sharedData_${userId}`, JSON.stringify(sharedDataCache));
+
+            // Also cache to global cache keys (for backward compatibility)
+            await AsyncStorage.setItem(`reports_${userId}`, JSON.stringify(dataToCache.reports));
+            await AsyncStorage.setItem(`gasStations_${userId}`, JSON.stringify(dataToCache.gasStations));
+            
+            if (__DEV__) {
+              console.log('[LoginScreen] Preloaded complete user data:', {
+                motors: dataToCache.motors.length,
+                trips: dataToCache.trips.length,
+                reports: dataToCache.reports.length,
+                fuelLogs: dataToCache.fuelLogs.length,
+                maintenance: dataToCache.maintenance.length,
+              });
+            }
+          }
+        } catch (completeDataError) {
+          // Silently fail - data will be fetched when screen loads
+          if (__DEV__ && completeDataError.message !== 'Authentication required. Please login.') {
+            console.warn('[LoginScreen] Comprehensive endpoint preload failed:', completeDataError.message);
+          }
+        }
       }
-      if (gasRes.status === 'fulfilled') {
-        await AsyncStorage.setItem('cachedGasStations', JSON.stringify(gasRes.value || []));
+    } catch (error) {
+      // Silently fail - data will be fetched when screen loads
+      if (__DEV__ && error.message !== 'Authentication required. Please login.') {
+        console.warn('[LoginScreen] Preload failed, data will load on screen focus:', error.message);
       }
-      if (motorsRes.status === 'fulfilled') {
-        await AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(motorsRes.value || []));
+      
+      // Fallback to individual API calls if comprehensive endpoint fails
+      try {
+        const [reportsRes, gasRes, motorsRes] = await Promise.allSettled([
+          fetchReports(),
+          fetchGasStations(),
+          fetchUserMotors(userId),
+        ]);
+
+        if (reportsRes.status === 'fulfilled') {
+          await AsyncStorage.setItem('cachedReports', JSON.stringify(reportsRes.value || []));
+        }
+        if (gasRes.status === 'fulfilled') {
+          await AsyncStorage.setItem('cachedGasStations', JSON.stringify(gasRes.value || []));
+        }
+        if (motorsRes.status === 'fulfilled') {
+          await AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(motorsRes.value || []));
+        }
+      } catch (fallbackError) {
+        console.error('[LoginScreen] Fallback preload also failed:', fallbackError);
       }
-    } catch {}
+    }
   };
 
   const validateEmail = (email) => {
@@ -117,11 +222,99 @@ const handleLogin = async () => {
     const data = await res.json();
 
     if (res.ok) {
+      // Save token first (this also configures API with tokenRef)
       await login(data.token);
-      if (data.user) {
-        await saveUser(data.user);
+      
+      // Wait a bit to ensure token is fully saved and backend has processed it
+      // Sometimes backend needs a moment to register the token
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Fetch complete user profile after login to get name and id fields
+      // The login response might not include all fields (like name and id)
+      let fullUserData = data.user || {};
+      
+      try {
+        // Verify token is available before making API call
+        const currentToken = await getAuthToken();
+        if (!currentToken) {
+          console.error('[LoginScreen] ❌ No token available for profile fetch - token may have been cleared');
+          console.error('[LoginScreen] Token from login:', data.token ? `${data.token.substring(0, 20)}...` : 'NO TOKEN');
+          throw new Error('No authentication token available');
+        }
+        
+        console.log('[LoginScreen] Fetching user profile with token:', {
+          hasToken: !!currentToken,
+          tokenLength: currentToken.length,
+          tokenPreview: `${currentToken.substring(0, 20)}...`,
+        });
+        
+        // Fetch full user profile to get name and id
+        const profileData = await fetchUserProfile();
+        
+        console.log('[LoginScreen] Profile fetch response:', {
+          hasData: !!profileData,
+          hasSuccess: !!profileData?.success,
+          hasUser: !!profileData?.user,
+          hasName: !!profileData?.name,
+          hasId: !!profileData?.id,
+        });
+        
+        // Handle response format: Priority order
+        // 1. New format: { success: true, data: {...} }
+        // 2. Wrapped format: { user: {...} }
+        // 3. Direct user object
+        if (profileData?.success && profileData?.data) {
+          // New backend format: { success: true, data: {...} }
+          fullUserData = { ...fullUserData, ...profileData.data };
+        } else if (profileData?.user) {
+          // Backend format: { user: {...} }
+          fullUserData = { ...fullUserData, ...profileData.user };
+        } else if (profileData && !profileData.user && (profileData.name || profileData.id)) {
+          // If profile returns user data directly (not wrapped in user property)
+          fullUserData = { ...fullUserData, ...profileData };
+        }
+      } catch (profileError) {
+        console.error('[LoginScreen] ❌ Failed to fetch user profile:', {
+          message: profileError.message,
+          isAuthError: profileError.isAuthError,
+          endpoint: profileError.endpoint,
+          responseBody: profileError.responseBody,
+          error: profileError,
+        });
+        // Continue with login response user data if profile fetch fails
+      }
+      
+      // Ensure we have the essential fields
+      if (fullUserData && fullUserData._id) {
+        // Make sure we merge properly with login response - prioritize fetched data
+        const completeUserData = {
+          ...data.user, // Base user data from login
+          ...fullUserData, // Override with fetched profile data (includes name/id)
+          // Ensure token is not saved in user object
+        };
+        
+        // Log what we're saving for debugging
+        console.log('[LoginScreen] Saving user data:', {
+          hasName: !!completeUserData.name,
+          hasId: !!completeUserData.id,
+          hasEmail: !!completeUserData.email,
+          name: completeUserData.name || 'MISSING',
+          id: completeUserData.id || 'MISSING',
+          email: completeUserData.email || 'MISSING',
+        });
+        
+        // Save user data
+        await saveUser(completeUserData);
+        
+        // Also save to ProfileScreen cache immediately
+        await AsyncStorage.setItem('profile_user_data', JSON.stringify(completeUserData));
+        
+        console.log('[LoginScreen] User data saved to cache and context');
+        
         // Preload and cache user-related data (motors, plus shared data)
-        preloadUserData(data.user._id);
+        preloadUserData(completeUserData._id);
+      } else {
+        console.warn('[LoginScreen] No user data to save - fullUserData:', !!fullUserData, 'has _id:', !!fullUserData?._id);
       }
 
       setEmail("");
@@ -224,9 +417,39 @@ const handleLogin = async () => {
 
           if (res.ok && data.token) {
             await login(data.token);
-            if (data.user) {
-              await saveUser(data.user);
-              preloadUserData(data.user._id);
+            
+            // Fetch complete user profile after Google login to get name and id fields
+            let fullUserData = data.user;
+            try {
+              // Configure API to use the token we just received
+              if (data.token) {
+                configureApi(() => data.token);
+                
+                // Fetch full user profile to get name and id
+                const profileData = await fetchUserProfile();
+                // Handle response format: Priority order
+                // 1. New format: { success: true, data: {...} }
+                // 2. Wrapped format: { user: {...} }
+                // 3. Direct user object
+                if (profileData?.success && profileData?.data) {
+                  // New backend format: { success: true, data: {...} }
+                  fullUserData = profileData.data;
+                } else if (profileData?.user) {
+                  // Backend format: { user: {...} }
+                  fullUserData = profileData.user;
+                } else if (profileData && !profileData.user && (profileData.name || profileData.id)) {
+                  // If profile returns user data directly (not wrapped in user property)
+                  fullUserData = profileData;
+                }
+              }
+            } catch (profileError) {
+              console.warn('[LoginScreen] Failed to fetch user profile after Google login, using login response:', profileError);
+              // Continue with login response user data if profile fetch fails
+            }
+            
+            if (fullUserData) {
+              await saveUser(fullUserData);
+              preloadUserData(fullUserData._id);
             }
             
             Alert.alert(

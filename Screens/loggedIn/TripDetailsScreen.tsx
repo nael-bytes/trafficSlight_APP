@@ -13,11 +13,9 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialIcons, Ionicons } from "@expo/vector-icons";
-import axios from "axios";
+import { apiRequest } from "../../utils/api";
 import { useUser } from "../../AuthContext/UserContextImproved";
 import { LinearGradient } from "expo-linear-gradient";
-
-const API_BASE = "https://ts-backend-1-jyit.onrender.com";
 const CACHE_KEY = "cachedTrips";
 const CACHE_EXPIRY_KEY = "cachedTripsExpiry";
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
@@ -39,6 +37,37 @@ export default function TripScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [cacheStatus, setCacheStatus] = useState('loading');
 
+  // Fetch trip summary from API instead of calculating locally
+  // Uses: GET /api/trips/analytics/summary
+  const fetchTripSummary = useCallback(async (userId: string, filter?: string) => {
+    try {
+      const queryParams = new URLSearchParams({ userId });
+      if (filter && filter !== 'all') {
+        queryParams.append('period', filter); // map filter to period: today, week, month, year
+      }
+      
+      const response = await apiRequest(`/api/trips/analytics/summary?${queryParams}`);
+      
+      if (response) {
+        return {
+          totalTrips: response.totalTrips || 0,
+          totalDistance: response.totalDistance || 0,
+          totalFuel: response.totalFuel || response.totalFuelUsed || 0,
+          totalTime: response.totalDuration || response.totalTime || 0,
+          totalExpense: response.totalExpense || response.totalCost || 0,
+        };
+      }
+    } catch (error) {
+      if (__DEV__) {
+      console.warn('[TripDetails] Failed to fetch trip summary from API, calculating locally:', error);
+      }
+    }
+    
+    // Fallback to local calculation if API fails
+    return null;
+  }, []);
+
+  // Fallback local calculation (only used if API fails)
   const calculateSummary = (tripsData) => {
     return {
       totalTrips: tripsData.length,
@@ -122,7 +151,14 @@ export default function TripScreen({ navigation }) {
             // Apply current filters to cached data
             const filtered = applyFilters(cachedData);
             setTrips(filtered);
-            setSummary(calculateSummary(filtered));
+            
+            // Try to fetch summary from API, fallback to local calculation
+            const summaryData = await fetchTripSummary(user._id, filter);
+            if (summaryData) {
+              setSummary(summaryData);
+            } else {
+              setSummary(calculateSummary(filtered));
+            }
             console.log('[TripDetails] Using cached data');
             setLoading(false);
             setRefreshing(false);
@@ -136,19 +172,40 @@ export default function TripScreen({ navigation }) {
       if (cachedData && !forceRefresh) {
         const filtered = applyFilters(cachedData);
         setTrips(filtered);
-        setSummary(calculateSummary(filtered));
+        
+        // Try to fetch summary from API, fallback to local calculation
+        const summaryData = await fetchTripSummary(user._id, filter);
+        if (summaryData) {
+          setSummary(summaryData);
+        } else {
+          setSummary(calculateSummary(filtered));
+        }
         console.log('[TripDetails] Using expired cache while fetching fresh data');
       }
 
       // Fetch fresh data from API
+      if (__DEV__) {
       console.log('[TripDetails] Fetching fresh data from API...');
-      const res = await axios.get(`${API_BASE}/api/trips/user/${user._id}`);
-      let data = res.data;
+      }
+      const [tripsRes, summaryData] = await Promise.allSettled([
+        apiRequest(`/api/trips/user/${user._id}`),
+        fetchTripSummary(user._id, filter)
+      ]);
 
-      // Apply filters to fresh data
+      let data = tripsRes.status === 'fulfilled' ? (Array.isArray(tripsRes.value) ? tripsRes.value : tripsRes.value?.trips || tripsRes.value?.data || []) : [];
+      
+      // Apply filters to fresh data (if API doesn't handle filtering)
       const filtered = applyFilters(data);
       setTrips(filtered);
-      setSummary(calculateSummary(filtered));
+      
+      // Use API summary if available, otherwise calculate locally
+      if (summaryData.status === 'fulfilled' && summaryData.value) {
+        setSummary(summaryData.value);
+        console.log('[TripDetails] Using API trip summary');
+      } else {
+        setSummary(calculateSummary(filtered));
+        console.log('[TripDetails] Using local trip summary calculation');
+      }
 
       // Save fresh data to cache
       await saveToCache(data);
@@ -199,10 +256,19 @@ export default function TripScreen({ navigation }) {
   }, [fetchTrips]);
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/user-motors/user/${user._id}`)
-      .then(res => setMotors(res.data))
-      .catch(err => console.error("Failed to fetch motors:", err));
-  }, []);
+    if (!user?._id) return;
+    
+    apiRequest(`/api/user-motors/user/${user._id}`)
+      .then((res: any) => {
+        const motors = Array.isArray(res) ? res : res?.motors || res?.data || [];
+        setMotors(motors);
+      })
+      .catch((err: any) => {
+        if (__DEV__) {
+          console.error("[TripDetails] Failed to fetch motors:", err);
+        }
+      });
+  }, [user?._id]);
 
   const formatTime = (min: number) => {
     const hr = Math.floor(min / 60);

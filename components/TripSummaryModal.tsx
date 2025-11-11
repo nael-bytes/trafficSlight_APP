@@ -1,6 +1,6 @@
 // Trip summary modal component
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,9 +23,91 @@ interface TripSummaryModalProps {
   startAddress?: string;
   endAddress?: string;
   tripMaintenanceActions?: any[];
+  // Additional trip data from Trip model
+  tripData?: {
+    // Estimated (Planned)
+    distance?: number;
+    fuelUsedMin?: number;
+    fuelUsedMax?: number;
+    eta?: string;
+    timeArrived?: string;
+    
+    // Actual (Tracked)
+    tripStartTime?: Date;
+    tripEndTime?: Date;
+    actualDistance?: number;
+    actualFuelUsedMin?: number;
+    actualFuelUsedMax?: number;
+    duration?: number; // in minutes
+    kmph?: number;
+    
+    // Location
+    startLocation?: {
+      address?: string;
+      lat?: number;
+      lng?: number;
+    };
+    endLocation?: {
+      address?: string;
+      lat?: number;
+      lng?: number;
+    };
+    
+    // Routing
+    plannedPolyline?: string;
+    actualPolyline?: string;
+    wasRerouted?: boolean;
+    rerouteCount?: number;
+    
+    // Background & Analytics
+    wasInBackground?: boolean;
+    showAnalyticsModal?: boolean;
+    analyticsNotes?: string;
+    trafficCondition?: "light" | "moderate" | "heavy";
+    
+    // Trip Summary
+    destination?: string;
+    isSuccessful?: boolean;
+    status?: "planned" | "in-progress" | "completed" | "cancelled";
+  };
 }
 
-export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
+// Custom comparison function for memo to prevent unnecessary re-renders
+const areTripSummaryPropsEqual = (prevProps: TripSummaryModalProps, nextProps: TripSummaryModalProps): boolean => {
+  // If visible changed, we need to re-render (for animation)
+  if (prevProps.visible !== nextProps.visible) return false;
+  
+  // If not visible, don't re-render even if other props change
+  if (!nextProps.visible) return true;
+  
+  // Compare rideStats by value (not reference)
+  if (prevProps.rideStats?.distance !== nextProps.rideStats?.distance ||
+      prevProps.rideStats?.duration !== nextProps.rideStats?.duration ||
+      prevProps.rideStats?.avgSpeed !== nextProps.rideStats?.avgSpeed ||
+      prevProps.rideStats?.speed !== nextProps.rideStats?.speed) {
+    return false;
+  }
+  
+  // Compare other props
+  if (prevProps.selectedMotor?._id !== nextProps.selectedMotor?._id) return false;
+  if (prevProps.startAddress !== nextProps.startAddress) return false;
+  if (prevProps.endAddress !== nextProps.endAddress) return false;
+  if (prevProps.tripMaintenanceActions?.length !== nextProps.tripMaintenanceActions?.length) return false;
+  
+  // Compare tripData by key fields
+  if (prevProps.tripData?.distance !== nextProps.tripData?.distance ||
+      prevProps.tripData?.duration !== nextProps.tripData?.duration ||
+      prevProps.tripData?.fuelUsedMin !== nextProps.tripData?.fuelUsedMin ||
+      prevProps.tripData?.fuelUsedMax !== nextProps.tripData?.fuelUsedMax) {
+    return false;
+  }
+  
+  // Callbacks should be stable (memoized), so we can skip checking them
+  // If they were different, it would have already re-rendered
+  return true;
+};
+
+export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
   visible,
   rideStats,
   onClose,
@@ -35,7 +117,18 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
   startAddress,
   endAddress,
   tripMaintenanceActions = [],
+  tripData,
 }) => {
+  // Debug duration values
+  console.log('[TripSummaryModal] Component props debug:', {
+    rideStatsDuration: rideStats.duration,
+    rideStatsDurationType: typeof rideStats.duration,
+    tripDataDuration: tripData?.duration,
+    tripDataDurationType: typeof tripData?.duration,
+    calculatedDuration: rideStats.duration && rideStats.duration > 0 ? Math.round(rideStats.duration / 60) : undefined,
+    rideStatsFull: rideStats,
+    tripDataFull: tripData
+  });
   const formatTime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -44,6 +137,58 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
       return `${hours}h ${minutes}m`;
     }
     return `${minutes}m`;
+  };
+
+  const formatDateTime = (date: Date | string | undefined): string => {
+    if (!date) return 'N/A';
+    const d = new Date(date);
+    return d.toLocaleString();
+  };
+
+  const formatDuration = (minutes: number | undefined): string => {
+    console.log('[TripSummaryModal] formatDuration called with:', {
+      minutes,
+      minutesType: typeof minutes,
+      isNaN: isNaN(minutes as number),
+      isFalsy: !minutes,
+      isZero: minutes === 0
+    });
+    
+    if (minutes === undefined || minutes === null || isNaN(minutes as number)) {
+      console.log('[TripSummaryModal] Duration is undefined/null/NaN, returning N/A');
+      return 'N/A';
+    }
+    
+    if (minutes <= 0) {
+      console.log('[TripSummaryModal] Duration is zero or negative, returning 0m');
+      return '0m';
+    }
+    
+    const hours = Math.floor(minutes / 60);
+    const mins = Math.floor(minutes % 60);
+    if (hours > 0) {
+      return `${hours}h ${mins}m`;
+    }
+    return `${mins}m`;
+  };
+
+  const getTrafficConditionColor = (condition: string | undefined): string => {
+    switch (condition) {
+      case 'light': return '#27ae60';
+      case 'moderate': return '#f39c12';
+      case 'heavy': return '#e74c3c';
+      default: return '#95a5a6';
+    }
+  };
+
+  const getStatusColor = (status: string | undefined): string => {
+    switch (status) {
+      case 'completed': return '#27ae60';
+      case 'in-progress': return '#3498db';
+      case 'cancelled': return '#e74c3c';
+      case 'planned': return '#f39c12';
+      default: return '#95a5a6';
+    }
   };
 
   const handleSave = () => {
@@ -58,8 +203,11 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
     onClose();
   };
 
-  // Show cancel button if trip distance is less than 1 km
-  const showCancelButton = rideStats.distance < 1.0;
+  // Memoized computed values
+  const showCancelButton = useMemo(() => rideStats.distance < 1.0, [rideStats.distance]);
+  
+  const memoizedTripData = useMemo(() => tripData, [tripData]);
+  const memoizedRideStats = useMemo(() => rideStats, [rideStats]);
 
   return (
     <Modal
@@ -80,32 +228,54 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
           </LinearGradient>
 
           <ScrollView style={styles.summaryContent}>
-            {/* Route Information */}
+            {/* Trip Overview */}
             <View style={styles.summarySection}>
-              <Text style={styles.sectionTitle}>Route Information</Text>
+              <Text style={styles.sectionTitle}>Trip Overview</Text>
+
+              <View style={styles.summaryRow}>
+                <MaterialIcons name="place" size={20} color="#00ADB5" />
+                <View style={styles.analyticsCompare}>
+                  <Text style={styles.analyticsLabel}>Destination:</Text>
+                  <Text style={styles.analyticsValue}>{tripData?.destination || "Free Drive"}</Text>
+                  <Text style={styles.analyticsLabel}>Status:</Text>
+                  <Text style={[styles.analyticsValue, { color: getStatusColor(tripData?.status) }]}>
+                    {tripData?.status?.toUpperCase() || "COMPLETED"}
+                  </Text>
+                </View>
+              </View>
 
               <View style={styles.summaryRow}>
                 <MaterialIcons name="my-location" size={20} color="#34495e" />
-                <Text style={styles.summaryText}>From: {startAddress || "Unknown"}</Text>
+                <Text style={styles.summaryText}>From: {tripData?.startLocation?.address || startAddress || "Unknown"}</Text>
               </View>
 
               <View style={styles.summaryRow}>
                 <MaterialIcons name="place" size={20} color="#e74c3c" />
-                <Text style={styles.summaryText}>To: {endAddress || "Unknown Location"}</Text>
+                <Text style={styles.summaryText}>To: {tripData?.endLocation?.address || endAddress || "Unknown Location"}</Text>
               </View>
             </View>
 
-            {/* Distance Analytics */}
+            {/* Distance & Fuel Analytics */}
             <View style={styles.summarySection}>
-              <Text style={styles.sectionTitle}>Distance Analytics</Text>
+              <Text style={styles.sectionTitle}>Distance & Fuel Analytics</Text>
 
               <View style={styles.summaryRow}>
                 <MaterialIcons name="straighten" size={20} color="#3498db" />
                 <View style={styles.analyticsCompare}>
+                  <Text style={styles.analyticsLabel}>Planned Distance:</Text>
+                  <Text style={styles.analyticsValue}>{((tripData?.distance || 0) / 1000).toFixed(2)} km</Text>
                   <Text style={styles.analyticsLabel}>Actual Distance:</Text>
-                  <Text style={styles.analyticsValue}>{rideStats.distance.toFixed(2)} km</Text>
-                  <Text style={styles.analyticsLabel}>Route Type:</Text>
-                  <Text style={styles.analyticsValue}>Free Drive</Text>
+                  <Text style={styles.analyticsValue}>{(tripData?.actualDistance || rideStats.distance).toFixed(2)} km</Text>
+                </View>
+              </View>
+
+              <View style={styles.summaryRow}>
+                <MaterialIcons name="local-gas-station" size={20} color="#f39c12" />
+                <View style={styles.analyticsCompare}>
+                  <Text style={styles.analyticsLabel}>Fuel Used (Min):</Text>
+                  <Text style={styles.analyticsValue}>{(tripData?.actualFuelUsedMin || tripData?.fuelUsedMin || 0).toFixed(2)} L</Text>
+                  <Text style={styles.analyticsLabel}>Fuel Used (Max):</Text>
+                  <Text style={styles.analyticsValue}>{(tripData?.actualFuelUsedMax || tripData?.fuelUsedMax || 0).toFixed(2)} L</Text>
                 </View>
               </View>
             </View>
@@ -118,13 +288,66 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
               <View style={styles.summaryRow}>
                 <MaterialIcons name="schedule" size={20} color="#9b59b6" />
                 <View style={styles.analyticsCompare}>
+                  <Text style={styles.analyticsLabel}>Trip Start:</Text>
+                  <Text style={styles.analyticsValue}>{formatDateTime(tripData?.tripStartTime)}</Text>
+                  <Text style={styles.analyticsLabel}>Trip End:</Text>
+                  <Text style={styles.analyticsValue}>{formatDateTime(tripData?.tripEndTime)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.summaryRow}>
+                <MaterialIcons name="timer" size={20} color="#8e44ad" />
+                <View style={styles.analyticsCompare}>
                   <Text style={styles.analyticsLabel}>Duration:</Text>
-                  <Text style={styles.analyticsValue}>{Math.round(rideStats.duration / 60)} minutes</Text>
+                  <Text style={styles.analyticsValue}>{formatDuration(
+                    tripData?.duration || 
+                    (rideStats.duration && rideStats.duration > 0 ? Math.round(rideStats.duration / 60) : undefined)
+                  )}</Text>
+                 
+                </View>
+              </View>
+
+              <View style={styles.summaryRow}>
+                <MaterialIcons name="speed" size={20} color="#e67e22" />
+                <View style={styles.analyticsCompare}>
                   <Text style={styles.analyticsLabel}>Avg Speed:</Text>
-                  <Text style={styles.analyticsValue}>{rideStats.avgSpeed.toFixed(1)} km/h</Text>
+                  <Text style={styles.analyticsValue}>{(tripData?.kmph || rideStats.avgSpeed).toFixed(1)} km/h</Text>
+                  <Text style={styles.analyticsLabel}>Traffic:</Text>
+                  <Text style={[styles.analyticsValue, { color: getTrafficConditionColor(tripData?.trafficCondition) }]}>
+                    {tripData?.trafficCondition ? tripData.trafficCondition.toUpperCase() : 'N/A'}
+                  </Text>
                 </View>
               </View>
             </View>
+
+            {/* Routing Information */}
+            {(tripData?.wasRerouted || tripData?.rerouteCount) && (
+              <View style={styles.summarySection}>
+                <Text style={styles.sectionTitle}>Routing Information</Text>
+
+                <View style={styles.summaryRow}>
+                  <MaterialIcons name="route" size={20} color="#e74c3c" />
+                  <View style={styles.analyticsCompare}>
+                    <Text style={styles.analyticsLabel}>Was Rerouted:</Text>
+                    <Text style={[styles.analyticsValue, { color: tripData?.wasRerouted ? '#e74c3c' : '#27ae60' }]}>
+                      {tripData?.wasRerouted ? 'YES' : 'NO'}
+                    </Text>
+                    <Text style={styles.analyticsLabel}>Reroute Count:</Text>
+                    <Text style={styles.analyticsValue}>{tripData?.rerouteCount || 0}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.summaryRow}>
+                  <MaterialIcons name="background" size={20} color="#95a5a6" />
+                  <View style={styles.analyticsCompare}>
+                    <Text style={styles.analyticsLabel}>Background Tracking:</Text>
+                    <Text style={[styles.analyticsValue, { color: tripData?.wasInBackground ? '#f39c12' : '#27ae60' }]}>
+                      {tripData?.wasInBackground ? 'YES' : 'NO'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
 
             {/* Motor Information */}
             {selectedMotor && (
@@ -138,9 +361,19 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
                     <Text style={styles.analyticsValue}>{selectedMotor.nickname || selectedMotor.name || "--"}</Text>
                     <Text style={styles.analyticsLabel}>Current Fuel Level:</Text>
                     <Text style={styles.analyticsValue}>{Math.round(selectedMotor.currentFuelLevel) || "--"}%</Text>
-                    <Text style={styles.analyticsLabel}>Total Distance Traveled:</Text>
-                    <Text style={styles.analyticsValue}>{(selectedMotor.analytics?.totalDistance + rideStats.distance)?.toFixed(2) || "--"} km</Text>
+                    
                   </View>
+                </View>
+              </View>
+            )}
+
+            {/* Analytics Notes */}
+            {tripData?.analyticsNotes && (
+              <View style={styles.summarySection}>
+                <Text style={styles.sectionTitle}>Analytics Notes</Text>
+                <View style={styles.summaryRow}>
+                  <MaterialIcons name="note" size={20} color="#9b59b6" />
+                  <Text style={styles.summaryText}>{tripData.analyticsNotes}</Text>
                 </View>
               </View>
             )}
@@ -208,7 +441,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = ({
       </View>
     </Modal>
   );
-};
+}, areTripSummaryPropsEqual);
 
 const styles = StyleSheet.create({
   // Summary Modal Styles
@@ -348,3 +581,5 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+
+TripSummaryModal.displayName = 'TripSummaryModal';

@@ -110,6 +110,26 @@ export default function MaintenanceDetails() {
   const [showDatePicker, setShowDatePicker] = useState<'start' | 'end' | null>(null);
   const [availableMotors, setAvailableMotors] = useState<string[]>([]);
 
+  // Fetch maintenance analytics from API instead of calculating locally
+  // Uses: GET /api/maintenance-records/analytics/summary?userId=user_id
+  const fetchMaintenanceStats = async (userId: string, motorId?: string) => {
+    try {
+      const { getMaintenanceAnalytics } = await import('../../services/motorService');
+      const analytics = await getMaintenanceAnalytics(userId, motorId);
+      
+      return {
+        totalCost: analytics.totalCost || 0,
+        totalRefuels: analytics.byType?.refuel || 0,
+        totalOilChanges: analytics.byType?.oil_change || 0,
+        totalTuneUps: analytics.byType?.tune_up || 0
+      };
+    } catch (error) {
+      console.warn('[MaintenanceDetails] Failed to fetch stats from API, calculating locally:', error);
+      return null;
+    }
+  };
+
+  // Fallback local calculation (only used if API fails)
   const calculateStats = (data: MaintenanceAction[]) => {
     if (!Array.isArray(data)) {
       console.error("❌ calculateStats received non-array data:", data);

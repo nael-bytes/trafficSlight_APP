@@ -1,16 +1,19 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
-type FlowState = 'searching' | 'destination_selected' | 'routes_found' | 'navigating' | 'completed';
+type FlowState = 'initial' | 'searching' | 'destination_selected' | 'routes_found' | 'navigating' | 'completed';
 
 interface FlowStateIndicatorProps {
   currentFlowState: FlowState;
+  onCancel?: () => void;
 }
 
 export const FlowStateIndicator: React.FC<FlowStateIndicatorProps> = ({
   currentFlowState,
+  onCancel,
 }) => {
-  if (currentFlowState === 'navigating') return null;
+  if (currentFlowState === 'navigating' || currentFlowState === 'initial') return null;
 
   const getStepStatus = (step: number) => {
     switch (step) {
@@ -83,6 +86,15 @@ export const FlowStateIndicator: React.FC<FlowStateIndicatorProps> = ({
         <Text style={styles.stateLabel}>
           {getCurrentStateLabel()}
         </Text>
+        {onCancel && currentFlowState !== 'searching' && (
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={onCancel}
+          >
+            <MaterialIcons name="close" size={20} color="#666" />
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -154,5 +166,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
     textAlign: 'center',
+  },
+  cancelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 16,
+    alignSelf: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
   },
 });

@@ -129,7 +129,7 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                 <View style={styles.detailTextContainer}>
                   <Text style={styles.detailLabel}>Distance Traveled</Text>
                   <Text style={styles.detailValue}>
-                    {distanceTraveled.toFixed(2)} km
+                    {(distanceTraveled || 0).toFixed(2)} km
                   </Text>
                 </View>
               </View>
@@ -139,7 +139,7 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                 <MaterialIcons name="straighten" size={24} color="#00ADB5" />
                 <View style={styles.detailTextContainer}>
                   <Text style={styles.detailLabel}>Distance Remaining</Text>
-                  <Text style={styles.detailValue}>{(distanceRemaining / 1000).toFixed(2)} km</Text>
+                  <Text style={styles.detailValue}>{((distanceRemaining || 0) / 1000).toFixed(2)} km</Text>
                 </View>
               </View>
 
@@ -196,7 +196,7 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                 <View style={styles.detailTextContainer}>
                   <Text style={styles.detailLabel}>Total Distance Traveled</Text>
                   <Text style={styles.detailValue}>
-                    {selectedMotor ? (selectedMotor.totalDistance).toFixed(2) : '--'} km
+                    {selectedMotor ? ((selectedMotor.totalDistance || 0)).toFixed(2) : '--'} km
                   </Text>
                 </View>
               </View>

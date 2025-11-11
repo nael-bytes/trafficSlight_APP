@@ -22,10 +22,9 @@ import { useNavigation } from "@react-navigation/native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as Location from 'expo-location';
 import { useUser } from "../../AuthContext/UserContextImproved";
-import { LOCALHOST_IP } from "@env";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Toast from 'react-native-toast-message';
-import { updateFuelLevel } from "../../utils/api";
+import { updateFuelLevel, apiRequest } from "../../utils/api";
 import { calculateFuelLevelAfterRefuel } from "../../utils/fuelCalculations";
 import type { Motor, LocationCoords } from "../../types";
 
@@ -64,25 +63,26 @@ export default function AddMaintenanceScreen() {
       if (cachedMotors) {
         const parsedMotors = JSON.parse(cachedMotors);
         setMotors(parsedMotors);
+        if (__DEV__) {
         console.log('[AddMaintenance] Loaded cached motors:', parsedMotors.length);
       }
+      }
 
-      // Fetch fresh data from API
-      const response = await fetch(`${LOCALHOST_IP}/api/user-motors/user/${user._id}`, {
-        headers: {
-          'Authorization': `Bearer ${user.token}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setMotors(data || []);
+      // Fetch fresh data from API using apiRequest
+      try {
+        const data = await apiRequest(`/api/user-motors/user/${user._id}`);
+        const motorsList = Array.isArray(data) ? data : (data?.motors || data?.data || []);
+        setMotors(motorsList);
         
         // Cache the fresh data
-        await AsyncStorage.setItem(`cachedMotors_${user._id}`, JSON.stringify(data || []));
-        console.log('[AddMaintenance] Fetched and cached motors:', data?.length || 0);
-      } else {
-        console.warn('[AddMaintenance] Failed to fetch motors from API');
+        await AsyncStorage.setItem(`cachedMotors_${user._id}`, JSON.stringify(motorsList));
+        if (__DEV__) {
+          console.log('[AddMaintenance] Fetched and cached motors:', motorsList.length);
+        }
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[AddMaintenance] Failed to fetch motors from API:', error);
+        }
       }
     } catch (error) {
       console.error('[AddMaintenance] Error fetching motors:', error);
@@ -256,24 +256,51 @@ export default function AddMaintenanceScreen() {
         }
       };
 
+      if (__DEV__) {
       console.log('[AddMaintenance] Submitting maintenance record:', maintenanceData);
+      }
 
-      const response = await fetch(`${LOCALHOST_IP}/api/maintenance-records`, {
+      // Use apiRequest for consistency and automatic authentication with retry
+      let savedRecord;
+      let retries = 0;
+      const maxRetries = 3;
+      
+      while (retries < maxRetries) {
+        try {
+          savedRecord = await apiRequest('/api/maintenance-records', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${user.token}`,
         },
         body: JSON.stringify(maintenanceData),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to save maintenance record');
+          break; // Success, exit retry loop
+        } catch (error: any) {
+          retries++;
+          
+          // Only retry on network errors or 5xx errors
+          const isRetryable = 
+            error?.message?.includes('Network') ||
+            error?.message?.includes('timeout') ||
+            error?.message?.includes('ECONNREFUSED') ||
+            error?.message?.includes('ETIMEDOUT');
+          
+          if (!isRetryable || retries >= maxRetries) {
+            throw error; // Not retryable or max retries reached
+          }
+          
+          // Exponential backoff: 1s, 2s, 4s
+          const delay = 1000 * Math.pow(2, retries - 1);
+          if (__DEV__) {
+            console.log(`[AddMaintenance] Retrying save after ${delay}ms (attempt ${retries}/${maxRetries})`);
+          }
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
-
-      const savedRecord = await response.json();
+      
+      if (__DEV__) {
       console.log('[AddMaintenance] ✅ Maintenance record saved:', savedRecord);
+      }
 
       // If it's a refuel, update the motor's fuel level using local calculation
       if (formData.type === 'refuel' && quantity && quantity > 0) {

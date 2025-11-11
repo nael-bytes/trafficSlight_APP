@@ -5,6 +5,8 @@ export interface LocationCoords {
   latitude: number;
   longitude: number;
   address?: string;
+  formatted_address?: string;
+  name?: string;
 }
 
 // Route and navigation types
@@ -125,10 +127,25 @@ export interface MapComponentProps {
   showGasStations: boolean;
   routeCoordinates?: LocationCoords[];
   snappedRouteCoordinates?: LocationCoords[];
+  alternativeRoutes?: any[]; // Add alternative routes prop
+  selectedRouteId?: string | null; // Currently selected route ID for highlighting
+  onSelectRoute?: (routeId: string) => void; // Callback when route is selected via polyline press
   isTracking?: boolean;
   onReportVoted?: () => void; // Callback to refresh reports data after vote
   onMapPress?: (event: any) => void; // Callback for map press events
   selectedMapLocation?: LocationCoords | null; // Selected location for map selection
+  mapFilters?: any; // Map filter configuration
+  onRegionChange?: (region: any) => void; // Callback when user manually pans the map
+  onRegionChangeComplete?: (region: any) => void; // Callback when region change completes
+  isFocused?: boolean; // CRITICAL: Prevent updates when screen is not focused
+  // 3D Navigation props
+  is3DNavigation?: boolean; // Enable 3D navigation mode
+  mapPitch?: number; // Map pitch angle (0-60 degrees)
+  mapBearing?: number; // Map bearing/rotation (0-360 degrees)
+  elevationAngle?: number; // Elevation angle (0-90 degrees)
+  cameraTilt?: number; // Camera tilt angle (0-67.5 degrees)
+  cameraHeading?: number; // Camera heading/rotation (0-360 degrees)
+  cameraFollow?: boolean; // Dynamic camera follow mode
 }
 
 // Gas station types

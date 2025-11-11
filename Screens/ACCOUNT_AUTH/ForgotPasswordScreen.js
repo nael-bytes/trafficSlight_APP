@@ -12,25 +12,57 @@ export default function ForgotPasswordScreen({ navigation }) {
 
   const handleRequestOtp = async () => {
     if (!email) return Alert.alert("Missing", "Please enter your email.");
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return Alert.alert("Invalid Email", "Please enter a valid email address.");
+    }
 
     setLoading(true);
     try {
-      const res = await fetch(`${LOCALHOST_IP}/api/auth/request-reset`, {
+      // Uses: POST /api/auth/reset-password (as per API documentation)
+      // Use API_BASE or LOCALHOST_IP depending on what's configured
+      const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
 
+      // Check response status before parsing JSON
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseError) {
+        console.error('[ForgotPassword] Failed to parse response:', parseError);
+        Alert.alert("Error", `Server returned invalid response (Status: ${res.status}). Please try again.`);
+        return;
+      }
 
-      const data = await res.json();
       if (res.ok) {
-        Alert.alert("OTP Sent", "Check your email for a reset code.");
-        navigation.navigate("ResetOtp", { email });
+        Alert.alert("Reset Code Sent", "Check your email for a reset code.");
+        // Store the token if provided in response (for testing/dev)
+        const resetToken = data.token || data.resetToken;
+        if (resetToken) {
+          navigation.navigate("ResetOtp", { email, token: resetToken });
+        } else {
+          navigation.navigate("ResetOtp", { email });
+        }
       } else {
-        Alert.alert("Error", data?.msg || "Failed to send OTP.");
+        // Show detailed error message from server
+        const errorMsg = data?.message || data?.msg || data?.error || `Server error (Status: ${res.status})`;
+        console.error('[ForgotPassword] Server error:', {
+          status: res.status,
+          statusText: res.statusText,
+          data: data,
+          email: email
+        });
+        Alert.alert("Error", errorMsg);
       }
     } catch (err) {
-      Alert.alert("Error", "Something went wrong.");
+      console.error('[ForgotPassword] Network error:', err);
+      Alert.alert("Error", err.message || "Failed to connect to server. Please check your internet connection.");
     } finally {
       setLoading(false);
     }
@@ -42,8 +74,12 @@ export default function ForgotPasswordScreen({ navigation }) {
       <TextInput
         label="Email"
         value={email}
-        onBlur={() => validateEmail(email)}
-
+        onChangeText={setEmail}
+        onBlur={() => {
+          if (email && !email.includes('@')) {
+            Alert.alert("Invalid Email", "Please enter a valid email address.");
+          }
+        }}
         keyboardType="email-address"
         autoCapitalize="none"
         style={styles.input}

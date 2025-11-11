@@ -127,9 +127,20 @@ export default function FuelCalculatorScreen() {
       // Add the new record to the existing records
       const updatedRecords = [...existingRecords, newEfficiencyRecord];
 
+      console.log('[FuelCalculator] Updating motor efficiency:', {
+        motorId: selectedMotor._id,
+        newEfficiency: calculatedEfficiency,
+        recordsCount: updatedRecords.length
+      });
+
       const response = await axios.put(`${API_BASE}/api/user-motors/${selectedMotor._id}/updateEfficiency`, {
         fuelEfficiencyRecords: updatedRecords,
         currentFuelEfficiency: calculatedEfficiency
+      });
+
+      console.log('[FuelCalculator] API response:', {
+        status: response.status,
+        data: response.data
       });
 
       if (response.status === 200) {

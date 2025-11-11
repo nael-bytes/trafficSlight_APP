@@ -1,8 +1,8 @@
 // Custom hook for tracking functionality
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import * as Location from 'expo-location';
-import { calculateDistance } from '../utils/location';
+import { calculateDistance, checkGPSServiceStatus, GPSServiceStatus } from '../utils/location';
 import { updateFuelLevel } from '../utils/api';
 import { snapToRoads, snapSinglePoint } from '../utils/roadSnapping';
 import { calculateNewFuelLevel, calculateFuelLevelAfterRefuel } from '../utils/fuelCalculations';
@@ -44,7 +44,18 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
   const snapBatchRef = useRef<LocationCoords[]>([]);
   const snapTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // FIXED: Clear route coordinates on reset to prevent memory leaks
   const resetTracking = useCallback(() => {
+    // CRITICAL: Clear stats timer first to prevent it from running after reset
+    if (statsTimer.current) {
+      clearInterval(statsTimer.current);
+      statsTimer.current = null;
+      if (__DEV__) {
+        console.log('[useTracking] Stats timer cleared in resetTracking');
+      }
+    }
+    
+    // Clear route coordinates to prevent memory accumulation
     setRouteCoordinates([]);
     setSnappedRouteCoordinates([]);
     setRideStats({
@@ -72,19 +83,59 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
 
     // Reset tracking data
     resetTracking();
+    
+    // CRITICAL: Set tracking start time BEFORE starting timer
     trackingStartTimeRef.current = Date.now();
+    
+    if (__DEV__) {
+      console.log('[useTracking] ⏱️ Starting duration timer', {
+        startTime: trackingStartTimeRef.current,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-    // Start duration timer
+    // Start duration timer - updates every second
     statsTimer.current = setInterval(() => {
+      if (!trackingStartTimeRef.current) {
+        if (__DEV__) {
+          console.warn('[useTracking] ⚠️ Timer running but trackingStartTimeRef is null');
+        }
+        return;
+      }
+      
       setRideStats(prev => {
-        const newDuration = prev.duration + 1;
-        const avgSpeed = newDuration > 0 ? (prev.distance / (newDuration / 3600)) : 0;
-        return { ...prev, duration: newDuration, avgSpeed };
+        const elapsedSeconds = Math.floor((Date.now() - trackingStartTimeRef.current!) / 1000);
+        const avgSpeed = elapsedSeconds > 0 ? (prev.distance / (elapsedSeconds / 3600)) : 0;
+        
+        if (__DEV__ && elapsedSeconds % 10 === 0) {
+          // Log every 10 seconds to avoid spam
+          console.log('[useTracking] ⏱️ Duration update', {
+            elapsedSeconds,
+            distance: prev.distance,
+            avgSpeed,
+          });
+        }
+        
+        return { ...prev, duration: elapsedSeconds, avgSpeed };
       });
     }, 1000);
 
     // Start location tracking with optimized settings
     try {
+      // CRITICAL: Check GPS service status with retry mechanism and better error handling
+      const gpsCheck = await checkGPSServiceStatus(3, 2000, 5000);
+      
+      if (!gpsCheck.isAvailable && !gpsCheck.canAttemptLocation) {
+        // GPS is disabled - cannot proceed
+        throw new Error(gpsCheck.message);
+      }
+      
+      // If GPS is acquiring signal but we can still attempt, show a warning but proceed
+      if (gpsCheck.status === GPSServiceStatus.ACQUIRING) {
+        console.warn('[useTracking] GPS is acquiring signal:', gpsCheck.message);
+        // Continue anyway - might work with longer timeout
+      }
+
       trackingLocationSub.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.Balanced, // Reduced from Highest to save battery
@@ -92,17 +143,36 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
           distanceInterval: 10, // Increased to 10 meters to reduce frequency
         },
         async (location) => {
-          if (!location || !location.coords) return;
+          if (!location || !location.coords) {
+            if (__DEV__) {
+              console.warn('[useTracking] Invalid location data received:', location);
+            }
+            return;
+          }
 
+          // Validate coordinates before using them
           const lat = location.coords.latitude;
           const lon = location.coords.longitude;
+          
+          // Sanity check: Validate coordinates are valid numbers within valid ranges
+          if (typeof lat !== 'number' || typeof lon !== 'number' ||
+              isNaN(lat) || isNaN(lon) ||
+              lat < -90 || lat > 90 ||
+              lon < -180 || lon > 180) {
+            if (__DEV__) {
+              console.warn('[useTracking] Invalid GPS coordinates received:', { lat, lon });
+            }
+            return; // Skip this update if coordinates are invalid
+          }
+
           const timestamp = location.timestamp ?? Date.now();
 
           // CRITICAL FIX: Limit route coordinates to prevent memory leak
+          // FIXED: Reduced limit from 1000 to 500 points to reduce memory usage
           setRouteCoordinates(prev => {
             const newCoords = [...prev, { latitude: lat, longitude: lon }];
-            // Keep only last 1000 points to prevent memory overflow
-            return newCoords.length > 1000 ? newCoords.slice(-1000) : newCoords;
+            // Keep only last 500 points to prevent memory overflow (reduced from 1000)
+            return newCoords.length > 500 ? newCoords.slice(-500) : newCoords;
           });
 
           // Add to snap batch for road-snapping
@@ -125,8 +195,8 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
                   if (snapResult.hasSnapped && snapResult.snappedCoordinates.length > 0) {
                     setSnappedRouteCoordinates(prev => {
                       const newSnapped = [...prev, ...snapResult.snappedCoordinates];
-                      // Keep only last 1000 points to prevent memory overflow
-                      return newSnapped.length > 1000 ? newSnapped.slice(-1000) : newSnapped;
+                      // FIXED: Reduced limit from 1000 to 500 points to reduce memory usage
+                      return newSnapped.length > 500 ? newSnapped.slice(-500) : newSnapped;
                     });
                     
                     // Use the last snapped point for distance calculation
@@ -162,10 +232,23 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
           }
 
           // Calculate distance delta using snapped coordinates if available
+          // CRITICAL FIX: Always use the most recent valid location for distance calculation
+          // Use snapped coordinates if available (more accurate), otherwise use raw coordinates
           const last = lastSnappedLocationRef.current || lastLocationRef.current;
           let distanceDeltaKm = 0;
           if (last) {
+            // Use Haversine formula for accurate distance calculation
             distanceDeltaKm = calculateDistance(last.latitude, last.longitude, lat, lon);
+            
+            // Sanity check: If distance seems too large (e.g., > 10km between updates), 
+            // it might be GPS error - cap it to prevent inaccurate readings
+            const MAX_REASONABLE_DISTANCE_KM = 1.0; // 1 km per update (at 5000ms = 720 km/h max speed)
+            if (distanceDeltaKm > MAX_REASONABLE_DISTANCE_KM) {
+              if (__DEV__) {
+                console.warn('[useTracking] Suspiciously large distance detected:', distanceDeltaKm, 'km. Possible GPS error. Capping to', MAX_REASONABLE_DISTANCE_KM);
+              }
+              distanceDeltaKm = 0; // Ignore this update to prevent inaccurate distance
+            }
           }
           lastLocationRef.current = { latitude: lat, longitude: lon, timestamp };
 
@@ -190,6 +273,7 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
             const newStats = {
               ...prev,
               distance: newDistance,
+              duration: elapsedSeconds, // Ensure duration is always calculated from start time
               speed: currentSpeedKmh,
               avgSpeed,
             };
@@ -210,29 +294,65 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
   }, [selectedMotor, resetTracking]);
 
   const stopTracking = useCallback(() => {
-    setIsTracking(false);
+    console.log('[useTracking] Starting stop tracking process...');
+    
+    try {
+      // First, set tracking to false to prevent new location updates
+      setIsTracking(false);
 
-    // Clear timers and subscriptions
-    if (statsTimer.current) {
-      clearInterval(statsTimer.current);
-      statsTimer.current = null;
+      // Clear timers and subscriptions with individual error handling
+      try {
+        if (statsTimer.current) {
+          clearInterval(statsTimer.current);
+          statsTimer.current = null;
+          console.log('[useTracking] Stats timer cleared');
+        }
+      } catch (error) {
+        console.warn('[useTracking] Error clearing stats timer:', error);
+      }
+
+      try {
+        if (trackingLocationSub.current) {
+          trackingLocationSub.current.remove();
+          trackingLocationSub.current = null;
+          console.log('[useTracking] Location subscription removed');
+        }
+      } catch (error) {
+        console.warn('[useTracking] Error removing location subscription:', error);
+      }
+
+      try {
+        if (snapTimerRef.current) {
+          clearTimeout(snapTimerRef.current);
+          snapTimerRef.current = null;
+          console.log('[useTracking] Snap timer cleared');
+        }
+      } catch (error) {
+        console.warn('[useTracking] Error clearing snap timer:', error);
+      }
+
+      // Reset refs safely
+      try {
+        lastLocationRef.current = null;
+        lastSnappedLocationRef.current = null;
+        trackingStartTimeRef.current = null;
+        snapBatchRef.current = [];
+        console.log('[useTracking] Refs reset successfully');
+      } catch (error) {
+        console.warn('[useTracking] Error resetting refs:', error);
+      }
+      
+      console.log('[useTracking] ✅ Tracking stopped successfully');
+    } catch (error) {
+      console.error('[useTracking] ❌ Error stopping tracking:', error);
+      // Force reset even if there's an error
+      try {
+        setIsTracking(false);
+        console.log('[useTracking] Force reset tracking state');
+      } catch (resetError) {
+        console.error('[useTracking] ❌ Error in force reset:', resetError);
+      }
     }
-
-    if (trackingLocationSub.current) {
-      trackingLocationSub.current.remove();
-      trackingLocationSub.current = null;
-    }
-
-    if (snapTimerRef.current) {
-      clearTimeout(snapTimerRef.current);
-      snapTimerRef.current = null;
-    }
-
-    // Reset refs
-    lastLocationRef.current = null;
-    lastSnappedLocationRef.current = null;
-    trackingStartTimeRef.current = null;
-    snapBatchRef.current = [];
   }, []);
 
   // Cleanup on unmount
@@ -244,6 +364,14 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
     };
   }, []);
 
+  // Memoized stats to prevent unnecessary updates
+  const memoizedStats = useMemo(() => ({
+    duration: rideStats.duration,
+    distance: rideStats.distance,
+    avgSpeed: rideStats.avgSpeed,
+    speed: rideStats.speed,
+  }), [rideStats.duration, rideStats.distance, rideStats.avgSpeed, rideStats.speed]);
+
   // Call onStatsUpdate when stats change (throttled to prevent excessive updates)
   const lastStatsUpdateRef = useRef<number>(0);
   useEffect(() => {
@@ -254,8 +382,8 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
     if (now - lastStatsUpdateRef.current < 5000) return;
     
     lastStatsUpdateRef.current = now;
-    onStatsUpdate(rideStats);
-  }, [rideStats.distance, rideStats.duration, onStatsUpdate, isTracking]);
+    onStatsUpdate(memoizedStats);
+  }, [memoizedStats, onStatsUpdate, isTracking]);
 
   return {
     isTracking,

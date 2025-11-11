@@ -31,27 +31,57 @@ export const MotorSelector: React.FC<MotorSelectorProps> = ({
   onSelectMotor,
   currentTripDistance = 0,
 }) => {
-  const renderMotorItem = ({ item }: { item: Motor }) => (
-    <TouchableOpacity
-      style={styles.motorItem}
-      onPress={() => {
-        onSelectMotor(item);
-        onClose();
-      }}
-    >
-      <View style={styles.motorInfo}>
-        <Text style={styles.motorName}>{item.nickname || item.name}</Text>
-        <Text style={styles.motorDetails}>{item.name}</Text>
-        <Text style={styles.motorDetails}>
-          {item.engineDisplacement}cc • {item.fuelEfficiency} km/L
-        </Text>
-      </View>
-      <View style={styles.fuelInfo}>
-        <Text style={styles.fuelLevel}>{item.currentFuelLevel.toFixed(0)}%</Text>
-        <MaterialIcons name="local-gas-station" size={40} color="#FF6B6B" />
-      </View>
-    </TouchableOpacity>
-  );
+  const renderMotorItem = ({ item }: { item: Motor }) => {
+    // Build motor details string with proper fallbacks
+    const detailsParts: string[] = [];
+    
+    // Add engine displacement if available
+    if (item.engineDisplacement && item.engineDisplacement > 0) {
+      detailsParts.push(`${item.engineDisplacement}cc`);
+    }
+    
+    // Add fuel efficiency if available
+    if (item.fuelEfficiency && item.fuelEfficiency > 0) {
+      detailsParts.push(`${item.fuelEfficiency} km/L`);
+    }
+    
+    // Fallback if no details available
+    const detailsText = detailsParts.length > 0 
+      ? detailsParts.join(' • ')
+      : 'Details not available';
+    
+    return (
+      <TouchableOpacity
+        style={styles.motorItem}
+        onPress={() => {
+          onSelectMotor(item);
+          onClose();
+        }}
+      >
+        <View style={styles.motorInfo}>
+          <Text style={styles.motorName}>{item.nickname || item.name || 'Unnamed Motor'}</Text>
+          {/* Show model name if different from nickname */}
+          {item.name && item.name !== (item.nickname || '') && (
+            <Text style={styles.motorDetails}>{item.name}</Text>
+          )}
+          {/* Show details: CC and fuel efficiency */}
+          <Text style={styles.motorDetails}>{detailsText}</Text>
+          {/* Additional info if available */}
+          {(item.plateNumber || item.fuelTank) && (
+            <Text style={[styles.motorDetails, { fontSize: 12, color: '#999', marginTop: 2 }]}>
+              {item.plateNumber ? `Plate: ${item.plateNumber}` : ''}
+              {item.plateNumber && item.fuelTank ? ' • ' : ''}
+              {item.fuelTank ? `Tank: ${item.fuelTank}L` : ''}
+            </Text>
+          )}
+        </View>
+        <View style={styles.fuelInfo}>
+          <Text style={styles.fuelLevel}>{(item.currentFuelLevel || 0).toFixed(0)}%</Text>
+          <MaterialIcons name="local-gas-station" size={40} color="#FF6B6B" />
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderTrackingView = () => (
     <View style={styles.trackingView}>
@@ -61,21 +91,21 @@ export const MotorSelector: React.FC<MotorSelectorProps> = ({
         <View style={styles.fuelRow}>
           <MaterialIcons name="local-gas-station" size={24} color="#FF6B6B" />
           <Text style={styles.fuelText}>
-            FUEL LEVEL: {selectedMotor?.currentFuelLevel.toFixed(0)}%
+            FUEL LEVEL: {(selectedMotor?.currentFuelLevel || 0).toFixed(0)}%
           </Text>
         </View>
 
         <View style={styles.distanceRow}>
           <MaterialIcons name="moving" size={24} color="#4CAF50" />
           <Text style={styles.distanceText}>
-            CURRENT TRIP: {currentTripDistance.toFixed(2)} km
+            CURRENT TRIP: {(currentTripDistance || 0).toFixed(2)} km
           </Text>
         </View>
 
         <View style={styles.statsRow}>
           <MaterialIcons name="analytics" size={24} color="#2196F3" />
           <Text style={styles.statsText}>
-            LIFETIME TOTAL: {(selectedMotor?.analytics.totalDistance + currentTripDistance).toFixed(2)} km
+            LIFETIME TOTAL: {((selectedMotor?.analytics?.totalDistance || 0) + (currentTripDistance || 0)).toFixed(2)} km
           </Text>
         </View>
 

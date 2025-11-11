@@ -54,10 +54,11 @@ const [email, setEmail] = useState(route.params?.email || "");
 
     try {
       const response = await fetch(`${LOCALHOST_IP}/api/auth/verify/${otp}`, {
-        method: "GET",
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({ email }),
       });
 
       const data = await response.json();

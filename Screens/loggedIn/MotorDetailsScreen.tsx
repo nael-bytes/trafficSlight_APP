@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity, Alert
 } from "react-native";
 import { RouteProp, useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
+import { apiRequest } from '../../utils/api';
 
 type RootStackParamList = {
   MotorDetails: { item: any };
@@ -18,6 +19,216 @@ export default function MotorDetailsScreen({ route }: Props) {
   const { item } = route.params;
   const navigation = useNavigation();
   const [loading, setLoading] = useState(false);
+  const [trips, setTrips] = useState<any[]>([]);
+  const [maintenanceRecords, setMaintenanceRecords] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState({
+    lastRefuel: null as any,
+    lastOilChange: null as any,
+    lastTuneUp: null as any,
+    kmSinceOilChange: 0,
+    kmSinceTuneUp: 0,
+    daysSinceOilChange: 0,
+    totalRefuels: 0,
+    totalOilChanges: 0,
+    totalTuneUps: 0,
+    averageFuelEfficiency: 0,
+    totalFuelConsumed: 0,
+    maintenanceAlerts: [] as string[],
+  });
+
+  // Abort controller ref for cleanup
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Fetch trips and maintenance data
+  useEffect(() => {
+    const fetchMotorData = async () => {
+      if (!item?._id) return;
+
+      // Abort previous request if still pending
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+
+      try {
+        setLoading(true);
+
+        // Fetch trips for this motor using apiRequest
+        const tripsData = await apiRequest(`/api/trips?motorId=${item._id}`, { signal });
+        if (Array.isArray(tripsData)) {
+          setTrips(tripsData);
+        } else if (tripsData?.trips) {
+          setTrips(Array.isArray(tripsData.trips) ? tripsData.trips : []);
+        } else if (tripsData?.data) {
+          setTrips(Array.isArray(tripsData.data) ? tripsData.data : []);
+        } else {
+          setTrips([]);
+        }
+
+        // Fetch maintenance records for this motor using apiRequest
+        const maintenanceData = await apiRequest(`/api/maintenance-records/motor/${item._id}`, { signal });
+
+        // Verify data structure
+        if (Array.isArray(maintenanceData)) {
+          setMaintenanceRecords(maintenanceData);
+        } else if (maintenanceData?.maintenanceRecords) {
+          setMaintenanceRecords(Array.isArray(maintenanceData.maintenanceRecords) ? maintenanceData.maintenanceRecords : []);
+        } else if (maintenanceData?.data) {
+          setMaintenanceRecords(Array.isArray(maintenanceData.data) ? maintenanceData.data : []);
+        } else {
+          setMaintenanceRecords([]);
+        }
+
+      } catch (error: any) {
+        // Ignore abort errors
+        if (error?.name === 'AbortError') {
+          return;
+        }
+
+        if (__DEV__) {
+          console.error('[MotorDetails] Error fetching motor data:', error);
+        }
+
+        // Set empty arrays on error
+        setTrips([]);
+        setMaintenanceRecords([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMotorData();
+
+    // Cleanup on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, [item?._id]);
+
+  // Memoize heavy calculations for analytics
+  const calculatedAnalytics = useMemo(() => {
+    if (!maintenanceRecords.length && !trips.length) {
+      return null;
+    }
+
+    const now = new Date();
+    const refuels = maintenanceRecords.filter(record => record.type === 'refuel');
+    const oilChanges = maintenanceRecords.filter(record => record.type === 'oil_change');
+    const tuneUps = maintenanceRecords.filter(record => record.type === 'tune_up');
+
+    // Sort once and reuse
+    const sortedRefuels = [...refuels].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const sortedOilChanges = [...oilChanges].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    const sortedTuneUps = [...tuneUps].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    const lastRefuel = sortedRefuels[0] || null;
+    const lastOilChange = sortedOilChanges[0] || null;
+    const lastTuneUp = sortedTuneUps[0] || null;
+
+    let kmSinceOilChange = 0;
+    let kmSinceTuneUp = 0;
+    let daysSinceOilChange = 0;
+
+    if (lastOilChange) {
+      const oilChangeDate = new Date(lastOilChange.timestamp);
+      const tripsSinceOilChange = trips.filter(trip => new Date(trip.tripStartTime) > oilChangeDate);
+      kmSinceOilChange = tripsSinceOilChange.reduce((total, trip) => total + (trip.actualDistance || 0), 0);
+      daysSinceOilChange = Math.floor((now.getTime() - oilChangeDate.getTime()) / (1000 * 60 * 60 * 24));
+    }
+
+    if (lastTuneUp) {
+      const tuneUpDate = new Date(lastTuneUp.timestamp);
+      const tripsSinceTuneUp = trips.filter(trip => new Date(trip.tripStartTime) > tuneUpDate);
+      kmSinceTuneUp = tripsSinceTuneUp.reduce((total, trip) => total + (trip.actualDistance || 0), 0);
+    }
+
+    return {
+      lastRefuel,
+      lastOilChange,
+      lastTuneUp,
+      kmSinceOilChange,
+      kmSinceTuneUp,
+      daysSinceOilChange,
+      totalRefuels: refuels.length,
+      totalOilChanges: oilChanges.length,
+      totalTuneUps: tuneUps.length,
+    };
+  }, [maintenanceRecords, trips]);
+
+  // Fetch analytics from API instead of calculating locally
+  // Uses: GET /api/user-motors/motor-overview/:motorId, /api/fuel-stats/:motorId, /api/maintenance-records/analytics/summary
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      if (!item?._id || !item?.userId) return;
+
+      try {
+        // Import motor service
+        const { getMotorAnalytics } = await import('../../services/motorService');
+        const analyticsData = await getMotorAnalytics(item._id, item.userId);
+
+        // Use memoized calculations as base
+        const baseAnalytics = calculatedAnalytics || {
+          lastRefuel: null,
+          lastOilChange: null,
+          lastTuneUp: null,
+          kmSinceOilChange: 0,
+          kmSinceTuneUp: 0,
+          daysSinceOilChange: 0,
+          totalRefuels: 0,
+          totalOilChanges: 0,
+          totalTuneUps: 0,
+        };
+
+        // Generate maintenance alerts from API data
+        const alerts: string[] = [];
+        const upcomingServices = analyticsData.maintenance?.upcomingServices || [];
+        const now = new Date();
+        
+        upcomingServices.forEach((service: any) => {
+          if (service.motorId === item._id) {
+            const serviceDate = new Date(service.nextServiceDate);
+            const daysUntilService = Math.floor((serviceDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysUntilService < 7) {
+              alerts.push(`⚠️ ${service.type} due soon (${daysUntilService} days)`);
+            }
+          }
+        });
+
+        setAnalytics({
+          ...baseAnalytics,
+          kmSinceOilChange: analyticsData.overview?.totalDistance || baseAnalytics.kmSinceOilChange,
+          kmSinceTuneUp: analyticsData.overview?.totalDistance || baseAnalytics.kmSinceTuneUp,
+          totalRefuels: analyticsData.maintenance?.byType?.refuel || baseAnalytics.totalRefuels,
+          totalOilChanges: analyticsData.maintenance?.byType?.oil_change || baseAnalytics.totalOilChanges,
+          totalTuneUps: analyticsData.maintenance?.byType?.tune_up || baseAnalytics.totalTuneUps,
+          averageFuelEfficiency: analyticsData.overview?.averageEfficiency || analyticsData.fuelStats?.averageEfficiency || 0,
+          totalFuelConsumed: analyticsData.overview?.totalFuelUsed || analyticsData.fuelStats?.totalLiters || 0,
+          maintenanceAlerts: alerts,
+        });
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[MotorDetails] Failed to fetch analytics from API, using local calculations:', error);
+        }
+        
+        // Fallback to memoized local calculation if API fails
+        if (calculatedAnalytics) {
+          setAnalytics({
+            ...calculatedAnalytics,
+            averageFuelEfficiency: 0,
+            totalFuelConsumed: 0,
+            maintenanceAlerts: [],
+        });
+        }
+      }
+    };
+
+    fetchAnalytics();
+  }, [item?._id, item?.userId, calculatedAnalytics]);
 
   // Add safety check for item
   if (!item) {
@@ -77,23 +288,40 @@ export default function MotorDetailsScreen({ route }: Props) {
         },
       };
 
-      const response = await fetch(
-        `https://ts-backend-1-jyit.onrender.com/api/user-motors/${rest._id}`,
-        {
+      // Use apiRequest for consistency and automatic authentication with retry
+      let updatedData;
+      let retries = 0;
+      const maxRetries = 3;
+      
+      while (retries < maxRetries) {
+        try {
+          updatedData = await apiRequest(`/api/user-motors/${rest._id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          });
+          break; // Success, exit retry loop
+        } catch (error: any) {
+          retries++;
+          
+          // Only retry on network errors or 5xx errors
+          const isRetryable = 
+            error?.message?.includes('Network') ||
+            error?.message?.includes('timeout') ||
+            error?.message?.includes('ECONNREFUSED') ||
+            error?.message?.includes('ETIMEDOUT');
+          
+          if (!isRetryable || retries >= maxRetries) {
+            throw error; // Not retryable or max retries reached
+          }
+          
+          // Exponential backoff: 1s, 2s, 4s
+          const delay = 1000 * Math.pow(2, retries - 1);
+          if (__DEV__) {
+            console.log(`[MotorDetails] Retrying update after ${delay}ms (attempt ${retries}/${maxRetries})`);
+          }
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
-      );
-
-      if (!response.ok) throw new Error(`Failed to update motor details: ${response.status}`);
-
-      // Safely parse JSON response
-      let updatedData: any = null;
-      try {
-        updatedData = await response.json();
-      } catch {
-        console.log("PUT response is not JSON, keeping previous state");
       }
 
       if (updatedData) {
@@ -121,9 +349,13 @@ export default function MotorDetailsScreen({ route }: Props) {
       }
 
       Alert.alert("✅ Success", "Motor details updated successfully!");
+      if (__DEV__) {
       console.log("Updated:", updatedData ?? payload);
+      }
     } catch (error) {
+      if (__DEV__) {
       console.error("Error updating motor:", error);
+      }
       Alert.alert("❌ Error", "Failed to update motor details.");
     } finally {
       setLoading(false);
@@ -138,9 +370,9 @@ export default function MotorDetailsScreen({ route }: Props) {
   const fieldTitles: Record<string, string> = {
     motorcycleId: "Motorcycle ID",
     name: "Name",
-    nickname: "Nickname",
-    fuelEfficiency: "Fuel Efficiency",
-    currentFuelLevel: "Current Fuel Level (%)",
+    nickname: "Nickname ",
+    fuelEfficiency: "Fuel Efficiency ",
+    currentFuelLevel: "Current Fuel Level (%) ",
     totalDrivableDistance: "Total Drivable Distance (km)",
     totalDrivableDistanceWithCurrentGas: "Total Drivable Distance (Current Fuel)",
     tripsCompleted: "Trips Completed",
@@ -159,38 +391,53 @@ export default function MotorDetailsScreen({ route }: Props) {
 
       <Text style={styles.title}>Motor Details</Text>
 
+      {/* Loading Indicator */}
+      {loading && (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading analytics data...</Text>
+        </View>
+      )}
+
       {/* Helper mapping for nice labels */}
 
 
       {/* Basic Info */}
       <Text style={styles.sectionTitle}>Basic Info</Text>
-      {["motorcycleId", "name", "nickname", "fuelEfficiency"].map(field => (
-        <View style={styles.section} key={field}>
-          <Text style={styles.label}>{fieldTitles[field]}</Text>
-          <TextInput
-            style={styles.input}
-            value={String(formData[field] ?? "")}
-            onChangeText={text => handleChange(field, text)}
-            keyboardType={["fuelEfficiency"].includes(field) ? "numeric" : "default"}
-          />
-        </View>
-      ))}
+      {["motorcycleId", "name", "nickname", "fuelEfficiency"].map(field => {
+        const isEditable = field === "nickname" || field === "fuelEfficiency";
+        return (
+          <View style={styles.section} key={field}>
+            <Text style={styles.label}>{fieldTitles[field]}</Text>
+            <TextInput
+              style={[styles.input, !isEditable && { backgroundColor: "#EEE" }]}
+              value={String(formData[field] ?? "")}
+              onChangeText={isEditable ? (text => handleChange(field, text)) : undefined}
+              keyboardType={["fuelEfficiency"].includes(field) ? "numeric" : "default"}
+              editable={isEditable}
+              placeholder={isEditable ? "Enter " + fieldTitles[field].replace(" ✏️", "") : undefined}
+            />
+            {!isEditable && (
+              <Text style={styles.readOnlyText}>Read-only field</Text>
+            )}
+          </View>
+        );
+      })}
 
       {/* Fuel Tracking */}
       <Text style={styles.sectionTitle}>Fuel Tracking</Text>
       <View style={styles.section}>
         <Text style={styles.label}>{fieldTitles.currentFuelLevel}</Text>
         <TextInput
-  style={styles.input}
-  value={
-    formData.currentFuelLevel !== undefined && formData.currentFuelLevel !== null
-      ? Number(formData.currentFuelLevel).toFixed(0)
-      : ""
-  }
-  onChangeText={text => handleChange("currentFuelLevel", text)}
-  keyboardType="numeric"
-/>
-
+          style={styles.input}
+          value={
+            formData.currentFuelLevel !== undefined && formData.currentFuelLevel !== null
+              ? Number(formData.currentFuelLevel).toFixed(0)
+              : ""
+          }
+          onChangeText={text => handleChange("currentFuelLevel", text)}
+          keyboardType="numeric"
+          editable={true}
+        />
       </View>
 
       {/* Virtual Fields */}
@@ -210,7 +457,7 @@ export default function MotorDetailsScreen({ route }: Props) {
         </View>
       ))}
 
-      {/* Analytics */}
+      {/* Analytics
       <Text style={styles.sectionTitle}>Analytics</Text>
       {["tripsCompleted", "totalDistance", "totalFuelUsed"].map(stat => {
         let value = formData.analytics?.[stat];
@@ -241,7 +488,201 @@ export default function MotorDetailsScreen({ route }: Props) {
             />
           </View>
         );
-      })}
+      })} */}
+
+
+      {/* Maintenance Analytics */}
+      <Text style={styles.sectionTitle}>🔧 Maintenance Analytics</Text>
+
+      {/* Last Refuel */}
+      <View style={styles.section}>
+        <Text style={styles.label}>Last Refuel</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: "#EEE" }]}
+          value={
+            analytics.lastRefuel
+              ? new Date(analytics.lastRefuel.timestamp).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+              : "No refuel records"
+          }
+          editable={false}
+        />
+        <Text style={styles.subLabel}>
+          Total Refuels: {analytics.totalRefuels} |
+          Quantity: {typeof analytics.lastRefuel?.details?.quantity === "number" ? analytics.lastRefuel.details.quantity.toFixed(2) : "N/A"}L |
+          Cost: ₱{analytics.lastRefuel?.details?.cost || "N/A"}
+        </Text>
+      </View>
+
+      {/* Last Oil Change */}
+      <View style={styles.section}>
+        <Text style={styles.label}>Last Oil Change</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: "#EEE" }]}
+          value={
+            analytics.lastOilChange
+              ? new Date(analytics.lastOilChange.timestamp).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+              : "No oil change records"
+          }
+          editable={false}
+        />
+        <Text style={styles.subLabel}>
+          Total Oil Changes: {analytics.totalOilChanges} |
+          KM Since Last Change: {analytics.kmSinceOilChange.toFixed(0)}km |
+          Quantity: {analytics.lastOilChange?.details?.quantity || "N/A"}L
+        </Text>
+      </View>
+
+      {/* Oil Change Countdown */}
+      {analytics.lastOilChange && (
+        <View style={styles.section}>
+          <Text style={styles.label}>🕒 Next Oil Change Countdown</Text>
+          
+          {/* Distance-based countdown */}
+          <View style={styles.countdownContainer}>
+            <Text style={styles.countdownTitle}>Distance Remaining</Text>
+            <View style={styles.countdownBox}>
+              <Text style={[
+                styles.countdownValue,
+                { color: analytics.kmSinceOilChange >= 3000 ? '#FF6B6B' : '#4CAF50' }
+              ]}>
+                {Math.max(0, 3000 - analytics.kmSinceOilChange).toFixed(0)} km
+              </Text>
+              <Text style={styles.countdownSubtext}>
+                {analytics.kmSinceOilChange >= 3000 ? 'OVERDUE' : 'remaining'}
+              </Text>
+            </View>
+            <View style={styles.progressBar}>
+              <View style={[
+                styles.progressFill,
+                {
+                  width: `${Math.min(100, (analytics.kmSinceOilChange / 3000) * 100)}%`,
+                  backgroundColor: analytics.kmSinceOilChange >= 3000 ? '#FF6B6B' : '#4CAF50'
+                }
+              ]} />
+            </View>
+          </View>
+
+          {/* Time-based countdown */}
+          <View style={styles.countdownContainer}>
+            <Text style={styles.countdownTitle}>Time Remaining</Text>
+            <View style={styles.countdownBox}>
+              <Text style={[
+                styles.countdownValue,
+                { color: analytics.daysSinceOilChange >= 180 ? '#FF6B6B' : '#4CAF50' }
+              ]}>
+                {Math.max(0, 180 - analytics.daysSinceOilChange)} days
+              </Text>
+              <Text style={styles.countdownSubtext}>
+                {analytics.daysSinceOilChange >= 180 ? 'OVERDUE' : 'remaining'}
+              </Text>
+            </View>
+            <View style={styles.progressBar}>
+              <View style={[
+                styles.progressFill,
+                {
+                  width: `${Math.min(100, (analytics.daysSinceOilChange / 180) * 100)}%`,
+                  backgroundColor: analytics.daysSinceOilChange >= 180 ? '#FF6B6B' : '#4CAF50'
+                }
+              ]} />
+            </View>
+          </View>
+
+          {/* Recommendation */}
+          <View style={[
+            styles.recommendationBox,
+            { backgroundColor: analytics.kmSinceOilChange >= 3000 || analytics.daysSinceOilChange >= 180 ? '#FFEBEE' : '#E8F5E8' }
+          ]}>
+            <Text style={[
+              styles.recommendationText,
+              { color: analytics.kmSinceOilChange >= 3000 || analytics.daysSinceOilChange >= 180 ? '#D32F2F' : '#2E7D32' }
+            ]}>
+              {analytics.kmSinceOilChange >= 3000 || analytics.daysSinceOilChange >= 180 
+                ? '⚠️ Oil change is overdue! Schedule maintenance soon.'
+                : '✅ Oil change is not due yet. Monitor distance and time.'}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* Last Tune Up */}
+      <View style={styles.section}>
+        <Text style={styles.label}>Last Tune Up</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: "#EEE" }]}
+          value={
+            analytics.lastTuneUp
+              ? new Date(analytics.lastTuneUp.timestamp).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+              : "No tune-up records"
+          }
+          editable={false}
+        />
+        <Text style={styles.subLabel}>
+          Total Tune Ups: {analytics.totalTuneUps} |
+          KM Since Last Tune Up: {analytics.kmSinceTuneUp.toFixed(0)}km |
+          Cost: ₱{analytics.lastTuneUp?.details?.cost || "N/A"}
+        </Text>
+      </View>
+
+      {/* Performance Analytics */}
+      <Text style={styles.sectionTitle}>📊 Performance Analytics</Text>
+
+      <View style={styles.section}>
+        <Text style={styles.label}>Average Fuel Efficiency</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: "#EEE" }]}
+          value={`${analytics.averageFuelEfficiency.toFixed(2)} km/L`}
+          editable={false}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.label}>Total Fuel Consumed</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: "#EEE" }]}
+          value={`${analytics.totalFuelConsumed.toFixed(2)} L`}
+          editable={false}
+        />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.label}>Total Trips</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: "#EEE" }]}
+          value={`${trips.length} trips`}
+          editable={false}
+        />
+      </View>
+
+      {/* Maintenance Alerts */}
+      {analytics.maintenanceAlerts.length > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>⚠️ Maintenance Alerts</Text>
+          {analytics.maintenanceAlerts.map((alert, index) => (
+            <View key={index} style={[styles.section, styles.alertSection]}>
+              <Text style={styles.alertText}>{alert}</Text>
+            </View>
+          ))}
+        </>
+      )}
+
       {/* Timestamps */}
       <Text style={styles.sectionTitle}>Timestamps</Text>
       {["createdAt", "updatedAt"].map(field => {
@@ -296,4 +737,45 @@ const styles = StyleSheet.create({
   saveButton: { backgroundColor: "#2F80ED", paddingVertical: 16, borderRadius: 12, marginTop: 20, alignItems: "center", shadowColor: "#2F80ED", shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
   saveText: { fontSize: 18, color: "#FFF", fontWeight: "700" },
   errorText: { fontSize: 16, color: "#FF6B6B", textAlign: "center", marginTop: 50 },
+  subLabel: { fontSize: 12, color: "#666", marginTop: 4, fontStyle: "italic" },
+  alertSection: { backgroundColor: "#FFF3CD", borderColor: "#FFEAA7", borderWidth: 1 },
+  alertText: { fontSize: 14, color: "#856404", fontWeight: "500" },
+  loadingContainer: { backgroundColor: "#E3F2FD", padding: 16, borderRadius: 8, marginBottom: 16, alignItems: "center" },
+  loadingText: { fontSize: 14, color: "#1976D2", fontWeight: "500" },
+  readOnlyText: { fontSize: 12, color: "#999", marginTop: 4, fontStyle: "italic" },
+  countdownContainer: { marginBottom: 16 },
+  countdownTitle: { fontSize: 14, color: "#666", marginBottom: 8, fontWeight: "600" },
+  countdownBox: { 
+    backgroundColor: "#F8F9FA", 
+    borderRadius: 8, 
+    padding: 12, 
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E9ECEF"
+  },
+  countdownValue: { fontSize: 24, fontWeight: "700", marginBottom: 4 },
+  countdownSubtext: { fontSize: 12, color: "#666", fontWeight: "500" },
+  progressBar: { 
+    height: 6, 
+    backgroundColor: "#E9ECEF", 
+    borderRadius: 3, 
+    marginTop: 8,
+    overflow: "hidden"
+  },
+  progressFill: { 
+    height: "100%", 
+    borderRadius: 3
+  },
+  recommendationBox: { 
+    marginTop: 12, 
+    padding: 12, 
+    borderRadius: 8, 
+    borderWidth: 1,
+    borderColor: "#E0E0E0"
+  },
+  recommendationText: { 
+    fontSize: 14, 
+    fontWeight: "600", 
+    textAlign: "center" 
+  },
 });

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { LocationCoords } from '../../types';
+import type { LocationCoords } from '../types';
 
 export interface MapState {
   currentLocation: LocationCoords | null;
@@ -79,8 +79,29 @@ export const useMapState = () => {
   const setDestination = useCallback((dest: LocationCoords | null) => 
     setMapState(prev => ({ ...prev, destination: dest })), []);
   
-  const setRegion = useCallback((reg: any) => 
-    setMapState(prev => ({ ...prev, region: reg })), []);
+  const setRegion = useCallback((reg: any) => {
+    // Validate region before setting (prevent null/invalid region errors)
+    if (reg && typeof reg.latitude === 'number' && typeof reg.longitude === 'number' &&
+        !isNaN(reg.latitude) && !isNaN(reg.longitude) &&
+        reg.latitude >= -90 && reg.latitude <= 90 &&
+        reg.longitude >= -180 && reg.longitude <= 180) {
+      setMapState(prev => ({ 
+        ...prev, 
+        region: {
+          ...reg,
+          latitudeDelta: reg.latitudeDelta || 0.05,
+          longitudeDelta: reg.longitudeDelta || 0.05,
+        }
+      }));
+    } else if (reg === null || reg === undefined) {
+      // Allow null to be set (for clearing region)
+      setMapState(prev => ({ ...prev, region: null }));
+    } else {
+      if (__DEV__) {
+        console.warn('[useMapState] Invalid region value, skipping update:', reg);
+      }
+    }
+  }, []);
   
   const setIsFollowingUser = useCallback((val: boolean) => 
     setMapState(prev => ({ ...prev, isFollowingUser: val })), []);

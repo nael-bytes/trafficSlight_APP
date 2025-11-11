@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import MaterialIcons from "react-native-vector-icons/MaterialIcons";
-import SearchBar from '../Screens/loggedIn/SearchBar';
+import SearchBar from './SearchBar';
 import type { LocationCoords, Motor } from '../types';
 
 interface SearchModalProps {
@@ -39,11 +39,11 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   userId,
   onMapSelection,
 }) => {
-  // Handle map selection with immediate modal close
+  // Handle map selection - don't close modal immediately
   const handleMapSelection = () => {
     console.log("🗺️ Map selection triggered from SearchModal");
     onMapSelection();
-    onClose(); // Close the modal immediately
+    // Don't close the modal immediately - let the map selection process handle it
   };
 
   return (

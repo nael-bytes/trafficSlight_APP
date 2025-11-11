@@ -29,11 +29,6 @@ const API_ENDPOINTS = {
   USER_MOTORS: '/api/user-motors',
 };
 
-const FUEL_EFFICIENCY_LIMITS = {
-  MIN: 5,
-  MAX: 50,
-};
-
 export default function AddMotorScreen({ navigation }) {
   const { user } = useUser();
   
@@ -91,6 +86,8 @@ export default function AddMotorScreen({ navigation }) {
 
     if (!motorForm.selectedMotor) {
       newErrors.selectedMotor = "Please select a motorcycle model";
+    } else if (!motorIdMap[motorForm.selectedMotor]) {
+      newErrors.selectedMotor = "Selected motorcycle model is invalid. Please select again.";
     }
 
     if (!formInputs.motorName.trim()) {
@@ -99,16 +96,9 @@ export default function AddMotorScreen({ navigation }) {
       newErrors.motorName = "Nickname must be at least 2 characters";
     }
 
-    if (motorForm.fuelEfficiency) {
-      const efficiency = parseFloat(motorForm.fuelEfficiency);
-      if (isNaN(efficiency) || efficiency < FUEL_EFFICIENCY_LIMITS.MIN || efficiency > FUEL_EFFICIENCY_LIMITS.MAX) {
-        newErrors.fuelEfficiency = `Fuel efficiency must be between ${FUEL_EFFICIENCY_LIMITS.MIN} and ${FUEL_EFFICIENCY_LIMITS.MAX} km/L`;
-      }
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [motorForm, formInputs]);
+  }, [motorForm, formInputs, motorIdMap]);
 
   // API functions with improved error handling
   const fetchMotorModels = useCallback(async () => {
@@ -219,6 +209,12 @@ export default function AddMotorScreen({ navigation }) {
     setIsSubmitting(true);
     try {
       const motorcycleId = motorIdMap[motorForm.selectedMotor];
+      
+      // Additional validation check
+      if (!motorcycleId) {
+        throw new Error('Invalid motorcycle model selected. Please select a valid model.');
+      }
+
       const endpoint = motorForm.editingId
         ? `${LOCALHOST_IP}${API_ENDPOINTS.USER_MOTORS}/${motorForm.editingId}`
         : `${LOCALHOST_IP}${API_ENDPOINTS.USER_MOTORS}/`;
@@ -235,7 +231,9 @@ export default function AddMotorScreen({ navigation }) {
         method,
         requestBody,
         selectedMotor: motorForm.selectedMotor,
-        motorcycleId
+        motorcycleId,
+        motorIdMapKeys: Object.keys(motorIdMap),
+        motorIdMapSize: Object.keys(motorIdMap).length
       });
 
       const response = await fetch(endpoint, {
@@ -244,11 +242,20 @@ export default function AddMotorScreen({ navigation }) {
         body: JSON.stringify(requestBody),
       });
 
-      const responseData = await response.json();
-
+      // Check if response is ok before parsing
       if (!response.ok) {
-        throw new Error(responseData?.msg || `Request failed with status ${response.status}`);
+        let errorMessage = `Request failed with status ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData?.msg || errorData?.message || errorMessage;
+        } catch (parseError) {
+          // If response is not JSON, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
+
+      const responseData = await response.json();
 
       console.log("✅ Motor saved successfully:", responseData);
       Toast.show({
@@ -259,7 +266,25 @@ export default function AddMotorScreen({ navigation }) {
 
       resetForm();
       setShowAddForm(false);
+      
+      // Refresh motors locally
       fetchUserMotors();
+      
+      // Refresh motors globally using useAppData
+      try {
+        // Import and use forceRefreshMotors from useAppData
+        const { forceRefreshMotors } = require('../../hooks/useAppData');
+        if (forceRefreshMotors && typeof forceRefreshMotors === 'function') {
+          forceRefreshMotors(user._id);
+          if (__DEV__) {
+            console.log('[AddMotorScreen] Refreshed motors globally');
+          }
+        }
+      } catch (error) {
+        if (__DEV__) {
+          console.warn('[AddMotorScreen] Failed to refresh motors globally:', error);
+        }
+      }
     } catch (error) {
       console.error('Save motor error:', error);
       Toast.show({
@@ -333,14 +358,6 @@ export default function AddMotorScreen({ navigation }) {
     }
 
     const efficiency = distance / liters;
-    
-    if (efficiency < FUEL_EFFICIENCY_LIMITS.MIN || efficiency > FUEL_EFFICIENCY_LIMITS.MAX) {
-      Alert.alert(
-        "Invalid Efficiency",
-        `Calculated fuel efficiency (${efficiency.toFixed(2)} km/L) is outside the normal range (${FUEL_EFFICIENCY_LIMITS.MIN}-${FUEL_EFFICIENCY_LIMITS.MAX} km/L). Please check your odometer readings.`
-      );
-      return;
-    }
 
     try {
       const response = await fetch(`${LOCALHOST_IP}${API_ENDPOINTS.MOTORCYCLES}`, {

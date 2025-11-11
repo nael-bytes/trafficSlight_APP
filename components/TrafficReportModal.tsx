@@ -93,23 +93,24 @@ export const TrafficReportModal: React.FC<TrafficReportModalProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!user || !currentLocation) {
-      Alert.alert('Error', 'User or location not available');
-      return;
-    }
-
-    if (!description.trim()) {
-      Alert.alert('Required', 'Please enter a description');
-      return;
-    }
-
-    if (!address) {
-      Alert.alert('Error', 'Address not available. Please wait for location to be processed.');
-      return;
-    }
-
-    setSubmitting(true);
     try {
+      if (!user || !currentLocation) {
+        Alert.alert('Error', 'User or location not available');
+        return;
+      }
+
+      if (!description.trim()) {
+        Alert.alert('Required', 'Please enter a description');
+        return;
+      }
+
+      if (!address) {
+        Alert.alert('Error', 'Address not available. Please wait for location to be processed.');
+        return;
+      }
+
+      setSubmitting(true);
+      
       await submitTrafficReport({
         reportType,
         location: currentLocation,
@@ -123,7 +124,7 @@ export const TrafficReportModal: React.FC<TrafficReportModalProps> = ({
       onSuccess();
       handleClose();
     } catch (error: any) {
-      console.error('Submit error:', error);
+      console.error('[TrafficReportModal] Submit error:', error);
       Alert.alert('Error', error.message || 'Failed to submit report');
     } finally {
       setSubmitting(false);
@@ -171,11 +172,11 @@ export const TrafficReportModal: React.FC<TrafficReportModalProps> = ({
             textAlignVertical="top"
           />
 
-          <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
+          {/* <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
             <Text style={styles.imageButtonText}>
               {image ? 'Change Image' : 'Upload Image (Optional)'}
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           {image && (
             <Image source={{ uri: image }} style={styles.imagePreview} resizeMode="cover" />

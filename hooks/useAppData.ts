@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchReports, fetchGasStations, fetchUserMotors } from '../utils/api';
+import { getAggregatedCachedData as getAggregatedCachedDataService } from '../services/dataService';
 import type { User, TrafficReport, GasStation, Motor } from '../types';
 import { useUser } from '../AuthContext/UserContextImproved';
 
@@ -39,17 +40,29 @@ interface UseAppDataReturn {
   reports: TrafficReport[];
   gasStations: GasStation[];
   motors: Motor[];
-  loading: boolean;
   error: string | null;
+  networkError: boolean;
+  isOffline: boolean;
   refreshData: () => Promise<void>;
+  retryFailedRequests: () => Promise<void>;
 }
 
 export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAppDataReturn => {
   const [reports, setReports] = useState<TrafficReport[]>([]);
   const [gasStations, setGasStations] = useState<GasStation[]>([]);
   const [motors, setMotors] = useState<Motor[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [networkError, setNetworkError] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [failedRequests, setFailedRequests] = useState<{
+    reports: boolean;
+    gasStations: boolean;
+    motors: boolean;
+  }>({
+    reports: false,
+    gasStations: false,
+    motors: false,
+  });
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const {
@@ -60,6 +73,64 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
     updateCachedGasStations,
     updateCachedMotors,
   } = useUser();
+
+  // Network error detection helper
+  const isNetworkError = useCallback((error: any): boolean => {
+    if (!error) return false;
+    
+    const errorMessage = error.message?.toLowerCase() || '';
+    const errorName = error.name?.toLowerCase() || '';
+    
+    return (
+      errorName === 'networkerror' ||
+      errorName === 'typeerror' ||
+      errorMessage.includes('network request failed') ||
+      errorMessage.includes('fetch failed') ||
+      errorMessage.includes('connection failed') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('no internet') ||
+      errorMessage.includes('offline') ||
+      error.code === 'NETWORK_ERROR' ||
+      error.code === 'TIMEOUT' ||
+      error.status === 0 || // Network error status
+      error.status === -1   // Network error status
+    );
+  }, []);
+
+  // Check if device is offline (non-blocking, used as hint only)
+  // OPTIMIZED: Reduced timeout to 1 second and made it truly non-blocking
+  const checkOfflineStatus = useCallback(async () => {
+    try {
+      // Create an AbortController for timeout (very short timeout to avoid blocking)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1000); // Reduced to 1 second
+      
+      // Try a simple fetch to check connectivity
+      const response = await fetch(`https://ts-backend-1-jyit.onrender.com/api/health`, {
+        method: 'HEAD',
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      // Only mark as offline if explicitly not OK, otherwise assume online
+      const isOffline = !response.ok;
+      setIsOffline(isOffline);
+      return isOffline;
+    } catch (error) {
+      // Don't immediately mark as offline on error - might be network hiccup
+      // Only mark as offline if it's a clear network error, not timeout/abort
+      if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+        // Timeout/abort - backend might be slow, but we're still online
+        setIsOffline(false);
+        return false;
+      }
+      
+      // For other errors, assume we're still online (will retry actual API calls)
+      setIsOffline(false);
+      return false;
+    }
+  }, []);
 
   const loadCachedData = useCallback(async (userId: string) => {
     try {
@@ -107,113 +178,245 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
   }) => {
     try {
       await Promise.all([
-        AsyncStorage.setItem('cachedReports', JSON.stringify(data.reports)),
-        AsyncStorage.setItem('cachedGasStations', JSON.stringify(data.gasStations)),
-        AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(data.motors)),
+        AsyncStorage.setItem(`reports_${userId}`, JSON.stringify(data.reports)),
+        AsyncStorage.setItem(`gasStations_${userId}`, JSON.stringify(data.gasStations)),
+        AsyncStorage.setItem(`motors_${userId}`, JSON.stringify(data.motors)),
       ]);
+      console.log('[useAppData] Data saved to cache using standardized keys');
     } catch (err) {
       console.warn('Failed to save to cache:', err);
     }
   }, []);
 
+  // Fetch data from API with fallback to cache
+  // OPTIMIZED: Don't wait for health check - start fetching immediately
   const fetchData = useCallback(async (userId: string, signal?: AbortSignal) => {
-    try {
-      setLoading(true);
-      setError(null);
+    if (__DEV__) {
+      console.log('[useAppData] 🔄 Fetching data from API...', {
+        userId,
+        hasSignal: !!signal,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
-      // Fetch reports and gas stations in parallel (always refresh)
-      const [reportsRes, gasStationsRes] = await Promise.allSettled([
+    // Reset error states at start of fetch
+    setError(null);
+    setNetworkError(false);
+    setFailedRequests({ reports: false, gasStations: false, motors: false });
+
+    // OPTIMIZED: Check offline status in background (non-blocking)
+    // Don't wait for it - start fetching immediately
+    checkOfflineStatus().catch(() => {
+      // Silent failure - health check is just a hint
+    });
+
+    try {
+
+      // Fetch all data in parallel from API
+      const [reportsResult, gasStationsResult, motorsResult] = await Promise.allSettled([
         fetchReports(signal),
         fetchGasStations(signal),
+        fetchUserMotors(userId, signal),
       ]);
 
-      // Use functional setState to get current values without adding to dependencies
-      let nextReports: TrafficReport[] = [];
-      let nextGasStations: GasStation[] = [];
-      let currentMotors: Motor[] = [];
-
-      if (reportsRes.status === 'fulfilled') {
-        nextReports = reportsRes.value;
-        setReports(nextReports);
-        updateCachedReports(nextReports);
-      } else {
-        // Keep existing reports on failure
-        setReports(prev => {
-          nextReports = prev;
-          return prev;
-        });
-      }
-
-      if (gasStationsRes.status === 'fulfilled') {
-        nextGasStations = gasStationsRes.value;
-        setGasStations(nextGasStations);
-        updateCachedGasStations(nextGasStations);
-      } else {
-        // Keep existing gas stations on failure
-        setGasStations(prev => {
-          nextGasStations = prev;
-          return prev;
-        });
-      }
-
-      // Only fetch motors once per session, or if we have no cached motors
-      const hasLoadedMotors = globalHasLoadedMotors.get(userId) || false;
-      if (!hasLoadedMotors && userId) {
-        try {
-          console.log('[useAppData] Fetching motors from API for user:', userId);
-          const motorsRes = await fetchUserMotors(userId, signal);
-          console.log('[useAppData] API returned motors:', Array.isArray(motorsRes) ? motorsRes.length : 'not an array', motorsRes);
-          if (Array.isArray(motorsRes)) {
-            setMotors(motorsRes);
-            updateCachedMotors(motorsRes);
-            globalHasLoadedMotors.set(userId, true);
-            currentMotors = motorsRes;
-            console.log('[useAppData] Motors saved to state and cache:', motorsRes.length);
-          }
-        } catch (motorsErr: any) {
-          if (motorsErr?.name !== 'AbortError') {
-            console.error('[useAppData] Motors fetch failed:', motorsErr?.message || motorsErr);
-          }
+      // Process reports
+      if (reportsResult.status === 'fulfilled') {
+        const reportsData = reportsResult.value || [];
+        setReports(reportsData);
+        updateCachedReports(reportsData);
+        // Save to AsyncStorage
+        await AsyncStorage.setItem(`cachedReports_${userId}`, JSON.stringify(reportsData));
+        if (__DEV__) {
+          console.log('[useAppData] ✅ Reports fetched successfully:', reportsData.length);
         }
       } else {
-        console.log('[useAppData] Skipping motors fetch, already loaded:', hasLoadedMotors);
-        // Get current motors for caching
-        setMotors(prev => {
-          currentMotors = prev;
-          return prev;
-        });
+        const reportsError = reportsResult.reason;
+        setFailedRequests(prev => ({ ...prev, reports: true }));
+        if (isNetworkError(reportsError)) {
+          setNetworkError(true);
+          if (__DEV__) {
+            console.warn('[useAppData] ❌ Network error fetching reports:', reportsError);
+          }
+        } else {
+          if (__DEV__) {
+            console.warn('[useAppData] ❌ Error fetching reports:', reportsError);
+          }
+        }
+        // Load from cache as fallback
+        try {
+          const cachedStr = await AsyncStorage.getItem(`cachedReports_${userId}`);
+          if (cachedStr) {
+            const cached = JSON.parse(cachedStr);
+            setReports(cached);
+            updateCachedReports(cached);
+            if (__DEV__) {
+              console.log('[useAppData] 📦 Loaded reports from cache (fallback)');
+            }
+          }
+        } catch (cacheError) {
+          if (__DEV__) {
+            console.warn('[useAppData] Failed to load cached reports:', cacheError);
+          }
+        }
       }
 
-      // Save to cache what we have
+      // Process gas stations
+      if (gasStationsResult.status === 'fulfilled') {
+        const gasStationsData = gasStationsResult.value || [];
+        setGasStations(gasStationsData);
+        updateCachedGasStations(gasStationsData);
+        // Save to AsyncStorage
+        await AsyncStorage.setItem(`cachedGasStations_${userId}`, JSON.stringify(gasStationsData));
+        if (__DEV__) {
+          console.log('[useAppData] ✅ Gas stations fetched successfully:', gasStationsData.length);
+        }
+      } else {
+        const gasStationsError = gasStationsResult.reason;
+        setFailedRequests(prev => ({ ...prev, gasStations: true }));
+        if (isNetworkError(gasStationsError)) {
+          setNetworkError(true);
+          if (__DEV__) {
+            console.warn('[useAppData] ❌ Network error fetching gas stations:', gasStationsError);
+          }
+        } else {
+          if (__DEV__) {
+            console.warn('[useAppData] ❌ Error fetching gas stations:', gasStationsError);
+          }
+        }
+        // Load from cache as fallback
+        try {
+          const cachedStr = await AsyncStorage.getItem(`cachedGasStations_${userId}`);
+          if (cachedStr) {
+            const cached = JSON.parse(cachedStr);
+            setGasStations(cached);
+            updateCachedGasStations(cached);
+            if (__DEV__) {
+              console.log('[useAppData] 📦 Loaded gas stations from cache (fallback)');
+            }
+          }
+        } catch (cacheError) {
+          if (__DEV__) {
+            console.warn('[useAppData] Failed to load cached gas stations:', cacheError);
+          }
+        }
+      }
+
+      // Process motors
+      if (motorsResult.status === 'fulfilled') {
+        const motorsData = motorsResult.value || [];
+        setMotors(motorsData);
+        updateCachedMotors(motorsData);
+        // Save to AsyncStorage
+        await AsyncStorage.setItem(`cachedMotors_${userId}`, JSON.stringify(motorsData));
+        if (__DEV__) {
+          console.log('[useAppData] ✅ Motors fetched successfully:', motorsData.length);
+        }
+      } else {
+        const motorsError = motorsResult.reason;
+        setFailedRequests(prev => ({ ...prev, motors: true }));
+        if (isNetworkError(motorsError)) {
+          setNetworkError(true);
+          if (__DEV__) {
+            console.warn('[useAppData] ❌ Network error fetching motors:', motorsError);
+          }
+        } else {
+          if (__DEV__) {
+            console.warn('[useAppData] ❌ Error fetching motors:', motorsError);
+          }
+        }
+        // Load from cache as fallback
+        try {
+          const cachedStr = await AsyncStorage.getItem(`cachedMotors_${userId}`);
+          if (cachedStr) {
+            const cached = JSON.parse(cachedStr);
+            if (Array.isArray(cached)) {
+              setMotors(cached);
+              updateCachedMotors(cached);
+              if (__DEV__) {
+                console.log('[useAppData] 📦 Loaded motors from cache (fallback)');
+              }
+            }
+          }
+        } catch (cacheError) {
+          if (__DEV__) {
+            console.warn('[useAppData] Failed to load cached motors:', cacheError);
+          }
+        }
+      }
+
+      // Set error state if all requests failed
+      const allFailed = 
+        reportsResult.status === 'rejected' &&
+        gasStationsResult.status === 'rejected' &&
+        motorsResult.status === 'rejected';
+      
+      if (allFailed) {
+        setError('Failed to fetch data. Using cached data if available.');
+      }
+
+      // Save combined data to cache
       try {
+        const currentReports = reportsResult.status === 'fulfilled' ? reportsResult.value : [];
+        const currentGasStations = gasStationsResult.status === 'fulfilled' ? gasStationsResult.value : [];
+        const currentMotors = motorsResult.status === 'fulfilled' ? motorsResult.value : [];
+        
         await saveToCache(userId, {
-          reports: nextReports,
-          gasStations: nextGasStations,
-          motors: currentMotors,
+          reports: currentReports || [],
+          gasStations: currentGasStations || [],
+          motors: currentMotors || [],
         });
-      } catch {}
+      } catch (cacheError) {
+        if (__DEV__) {
+          console.warn('[useAppData] Failed to save to cache:', cacheError);
+        }
+      }
 
-      // Warn consolidated errors (non-fatal)
-      const nonAbortReportsError =
-        reportsRes.status === 'rejected' && (reportsRes.reason?.name !== 'AbortError' ? reportsRes.reason : null);
-      const nonAbortGasError =
-        gasStationsRes.status === 'rejected' && (gasStationsRes.reason?.name !== 'AbortError' ? gasStationsRes.reason : null);
-
-      if (nonAbortReportsError || nonAbortGasError) {
-        console.warn('Some data fetch errors:', {
-          reports: nonAbortReportsError || null,
-          gasStations: nonAbortGasError || null,
+      if (__DEV__) {
+        const fetchedReports = reportsResult.status === 'fulfilled' ? reportsResult.value : [];
+        const fetchedGasStations = gasStationsResult.status === 'fulfilled' ? gasStationsResult.value : [];
+        const fetchedMotors = motorsResult.status === 'fulfilled' ? motorsResult.value : [];
+        
+        console.log('[useAppData] ✅ Data fetch completed', {
+          reportsCount: fetchedReports.length,
+          gasStationsCount: fetchedGasStations.length,
+          motorsCount: fetchedMotors.length,
+          hasErrors: allFailed,
+          timestamp: new Date().toISOString(),
         });
       }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        console.error('Failed to fetch data:', err);
-        setError(err.message || 'Failed to fetch data');
+    } catch (error: any) {
+      // Handle abort errors gracefully
+      if (error.name === 'AbortError' || signal?.aborted) {
+        if (__DEV__) {
+          console.log('[useAppData] Request aborted');
+        }
+        return;
       }
-    } finally {
-      setLoading(false);
+
+      // General error handling
+      if (__DEV__) {
+        console.error('[useAppData] ❌ Critical error in fetchData:', error);
+      }
+
+      setError(error.message || 'Failed to fetch data');
+      if (isNetworkError(error)) {
+        setNetworkError(true);
+        setIsOffline(true);
+      }
+
+      // Load from cache as last resort
+      try {
+        await loadCachedData(userId);
+        if (__DEV__) {
+          console.log('[useAppData] 📦 Loaded all data from cache (error fallback)');
+        }
+      } catch (cacheError) {
+        if (__DEV__) {
+          console.warn('[useAppData] Failed to load cached data:', cacheError);
+        }
+      }
     }
-  }, [saveToCache, updateCachedReports, updateCachedGasStations, updateCachedMotors]);
+  }, [saveToCache, updateCachedReports, updateCachedGasStations, updateCachedMotors, isNetworkError, checkOfflineStatus, loadCachedData]);
 
   const refreshData = useCallback(async () => {
     if (!user?._id) return;
@@ -229,6 +432,29 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
     await fetchData(user._id, abortControllerRef.current.signal);
   }, [user?._id, fetchData]);
 
+  // Retry failed requests function
+  const retryFailedRequests = useCallback(async () => {
+    if (!user?._id) return;
+    
+    console.log('[useAppData] Retrying failed requests:', failedRequests);
+    
+    // Reset error states
+    setError(null);
+    setNetworkError(false);
+    setIsOffline(false);
+    
+    // Cancel any ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+
+    // Retry the data fetch
+    await fetchData(user._id, abortControllerRef.current.signal);
+  }, [user?._id, fetchData, failedRequests]);
+
   // Initial load - use GLOBAL Map to survive unmount/remount
   useEffect(() => {
     if (!user?._id) return;
@@ -236,22 +462,14 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
     // Check if we already initialized this session
     const hasInitialized = globalHasInitialized.get(user._id);
     if (hasInitialized) {
-      console.log('[useAppData] Already initialized for user:', user._id, '- checking for fresh data');
-      // Still check for fresh data, but don't re-run full initialization
-      const checkForFreshData = async () => {
-        // Load cached data (might have changed)
-        await loadCachedData(user._id);
-
-        // Always fetch fresh data (but only if we don't have cached motors OR if forced refresh)
-        const hasCachedMotors = globalHasLoadedMotors.get(user._id);
-        if (!hasCachedMotors) {
-          console.log('[useAppData] No cached motors, fetching from API');
-          await refreshData();
-        } else {
-          console.log('[useAppData] Has cached motors, skipping API fetch for now');
-        }
-      };
-      checkForFreshData();
+      if (__DEV__) {
+        console.log('[useAppData] Already initialized for user:', user._id, '- using cached data');
+      }
+      // Don't fetch again if already initialized - just use cached data
+      // This prevents constant refreshing
+      loadCachedData(user._id).catch(() => {
+        // Silent failure - cached data might not exist
+      });
       return;
     }
 
@@ -259,26 +477,43 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
       console.log('[useAppData] INITIALIZING for user:', user._id);
       globalHasInitialized.set(user._id, true);
 
-      // Load cached data first
-      await loadCachedData(user._id);
+      // OPTIMIZED: Load cached data first (synchronous for immediate display)
+      // This shows data immediately without waiting
+      loadCachedData(user._id).catch(() => {
+        // Silent failure - cached data might not exist
+      });
+
+      // OPTIMIZED: Fetch fresh data in background (non-blocking)
+      // Don't await - let it run in background while UI shows cached data
+      // This makes the UI appear instantly while data refreshes
+      refreshData().catch((error) => {
+        if (__DEV__) {
+          console.warn('[useAppData] Background fetch failed:', error);
+        }
+        // Silent failure - cached data is already shown
+      });
 
       // If we loaded motors from cache, mark as loaded to skip future fetches
-      const cachedMotorsStr = await AsyncStorage.getItem(`cachedMotors_${user._id}`);
-      if (cachedMotorsStr) {
-        try {
-          const parsed = JSON.parse(cachedMotorsStr);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            globalHasLoadedMotors.set(user._id, true);
-            console.log('[useAppData] Found cached motors, marking as loaded');
+      // Do this in background too (non-blocking)
+      AsyncStorage.getItem(`cachedMotors_${user._id}`).then((cachedMotorsStr) => {
+        if (cachedMotorsStr) {
+          try {
+            const parsed = JSON.parse(cachedMotorsStr);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              globalHasLoadedMotors.set(user._id, true);
+              if (__DEV__) {
+                console.log('[useAppData] Found cached motors, marking as loaded');
+              }
+            }
+          } catch (e) {
+            if (__DEV__) {
+              console.warn('[useAppData] Failed to parse cached motors:', e);
+            }
           }
-        } catch (e) {
-          console.warn('[useAppData] Failed to parse cached motors:', e);
         }
-      }
-
-      // Always fetch fresh data on first load
-      console.log('[useAppData] Fetching fresh data from API');
-      await refreshData();
+      }).catch(() => {
+        // Silent failure
+      });
     };
 
     initializeData();
@@ -329,8 +564,10 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
     reports,
     gasStations,
     motors,
-    loading,
     error,
+    networkError,
+    isOffline,
     refreshData,
+    retryFailedRequests,
   };
 };
