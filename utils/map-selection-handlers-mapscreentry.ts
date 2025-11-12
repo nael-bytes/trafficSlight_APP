@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import * as Location from 'expo-location';
 
 export interface LocationCoords {
@@ -75,6 +75,10 @@ export const useMapSelectionHandlers = (
   flowStateManager?: (state: string) => void // Optional - flow state is now handled by wrapper
 ): MapSelectionHandlers => {
   
+  // CRITICAL: Guard refs to prevent double-selection crashes
+  const isProcessingMapPressRef = useRef(false);
+  const isConfirmingRef = useRef(false);
+  
   const startMapSelection = useCallback(() => {
     if (__DEV__) {
       console.log("🚀 Starting map selection mode");
@@ -95,7 +99,13 @@ export const useMapSelectionHandlers = (
   }, [updateUiState, setMapSelectionState]);
 
   const cancelMapSelection = useCallback(() => {
-    console.log("❌ Cancelling map selection");
+    if (__DEV__) {
+      console.log("❌ Cancelling map selection");
+    }
+    // Reset processing flags
+    isProcessingMapPressRef.current = false;
+    isConfirmingRef.current = false;
+    
     updateUiState({ 
       isMapSelectionMode: false, 
       showSearchModal: true // Return to search modal
@@ -127,47 +137,182 @@ export const useMapSelectionHandlers = (
       console.log("✅ Map selection mode active, processing press");
     }
 
-    // Handle different event structures
-    let latitude, longitude;
-    if (event.nativeEvent && event.nativeEvent.coordinate) {
-      latitude = event.nativeEvent.coordinate.latitude;
-      longitude = event.nativeEvent.coordinate.longitude;
-    } else if (event.coordinate) {
-      latitude = event.coordinate.latitude;
-      longitude = event.coordinate.longitude;
-    } else {
-      console.error("❌ No coordinate found in event:", event);
+    // CRITICAL: Allow multiple selections until user confirms
+    // Only guard against concurrent processing (not multiple selections)
+    // User can click multiple times to change selection, but we prevent rapid concurrent processing
+    if (isProcessingMapPressRef.current) {
+      if (__DEV__) {
+        console.log("⚠️ Map press processing in progress, will process after delay...");
+      }
+      // Queue the press after a short delay to allow current processing to complete
+      // Don't recursively call handleMapPress - just process the event after delay
+      setTimeout(async () => {
+        if (!uiState.isMapSelectionMode && !mapSelectionState.isSelecting) {
+          return; // Selection mode ended
+        }
+        
+        // Process the queued press directly
+        isProcessingMapPressRef.current = true;
+        try {
+          // Extract and process coordinates
+          let latitude, longitude;
+          if (event?.nativeEvent?.coordinate) {
+            latitude = event.nativeEvent.coordinate.latitude;
+            longitude = event.nativeEvent.coordinate.longitude;
+          } else if (event?.coordinate) {
+            latitude = event.coordinate.latitude;
+            longitude = event.coordinate.longitude;
+          } else {
+            isProcessingMapPressRef.current = false;
+            return;
+          }
+          
+          if (typeof latitude !== 'number' || typeof longitude !== 'number' ||
+              isNaN(latitude) || isNaN(longitude) ||
+              latitude < -90 || latitude > 90 ||
+              longitude < -180 || longitude > 180) {
+            isProcessingMapPressRef.current = false;
+            return;
+          }
+          
+          const newLocation = { latitude, longitude };
+          setMapSelectionState(prev => ({ ...prev, selectedLocation: newLocation }));
+          
+          // Reverse geocode in background
+          try {
+            const address = await reverseGeocodeLocation(latitude, longitude);
+            const locationWithAddress = { ...newLocation, address };
+            setMapSelectionState(prev => {
+              if (prev.selectedLocation?.latitude === latitude && 
+                  prev.selectedLocation?.longitude === longitude) {
+                return { ...prev, selectedLocation: locationWithAddress };
+              }
+              return prev;
+            });
+          } catch (error) {
+            const locationWithFallback = { ...newLocation, address: "Selected Location" };
+            setMapSelectionState(prev => {
+              if (prev.selectedLocation?.latitude === latitude && 
+                  prev.selectedLocation?.longitude === longitude) {
+                return { ...prev, selectedLocation: locationWithFallback };
+              }
+              return prev;
+            });
+          }
+        } catch (error) {
+          console.error('❌ Error processing queued map press:', error);
+        } finally {
+          setTimeout(() => {
+            isProcessingMapPressRef.current = false;
+          }, 200);
+        }
+      }, 100); // Short delay to prevent concurrent processing
       return;
     }
-    const newLocation = { latitude, longitude };
-    console.log("📍 Selected coordinates:", latitude, longitude);
-    
-    // Immediately update state to show selection
-    setMapSelectionState(prev => ({ ...prev, selectedLocation: newLocation }));
-    
-    // Reverse geocode the selected location with better error handling
+
+    // Set processing flag to prevent concurrent processing (not multiple selections)
+    isProcessingMapPressRef.current = true;
+
     try {
-      console.log("🔄 Reverse geocoding location...");
-      const address = await reverseGeocodeLocation(latitude, longitude);
-      const locationWithAddress = { ...newLocation, address };
-      setMapSelectionState(prev => ({ ...prev, selectedLocation: locationWithAddress }));
-      console.log("✅ Address found:", address);
+      // Handle different event structures with null checks
+      let latitude, longitude;
+      if (event?.nativeEvent?.coordinate) {
+        latitude = event.nativeEvent.coordinate.latitude;
+        longitude = event.nativeEvent.coordinate.longitude;
+      } else if (event?.coordinate) {
+        latitude = event.coordinate.latitude;
+        longitude = event.coordinate.longitude;
+      } else {
+        console.error("❌ No coordinate found in event:", event);
+        isProcessingMapPressRef.current = false;
+        return;
+      }
+      
+      // Validate coordinates
+      if (typeof latitude !== 'number' || typeof longitude !== 'number' ||
+          isNaN(latitude) || isNaN(longitude) ||
+          latitude < -90 || latitude > 90 ||
+          longitude < -180 || longitude > 180) {
+        console.error("❌ Invalid coordinates:", latitude, longitude);
+        isProcessingMapPressRef.current = false;
+        return;
+      }
+      
+      const newLocation = { latitude, longitude };
+      if (__DEV__) {
+        console.log("📍 Selected coordinates:", latitude, longitude);
+      }
+      
+      // Immediately update state to show selection (allows multiple selections)
+      setMapSelectionState(prev => ({ ...prev, selectedLocation: newLocation }));
+      
+      // Reverse geocode the selected location with better error handling
+      // This runs in background and doesn't block next selection
+      try {
+        if (__DEV__) {
+          console.log("🔄 Reverse geocoding location...");
+        }
+        const address = await reverseGeocodeLocation(latitude, longitude);
+        const locationWithAddress = { ...newLocation, address };
+        // Update with address (may overwrite if user selected another location)
+        setMapSelectionState(prev => {
+          // Only update if this is still the selected location (user hasn't selected another)
+          if (prev.selectedLocation?.latitude === latitude && 
+              prev.selectedLocation?.longitude === longitude) {
+            return { ...prev, selectedLocation: locationWithAddress };
+          }
+          return prev; // User selected another location, keep current
+        });
+        if (__DEV__) {
+          console.log("✅ Address found:", address);
+        }
+      } catch (error) {
+        console.error('❌ Reverse geocoding failed:', error);
+        // Keep the location without address but still allow selection
+        const locationWithFallback = { ...newLocation, address: "Selected Location" };
+        setMapSelectionState(prev => {
+          // Only update if this is still the selected location
+          if (prev.selectedLocation?.latitude === latitude && 
+              prev.selectedLocation?.longitude === longitude) {
+            return { ...prev, selectedLocation: locationWithFallback };
+          }
+          return prev;
+        });
+      }
     } catch (error) {
-      console.error('❌ Reverse geocoding failed:', error);
-      // Keep the location without address but still allow selection
-      const locationWithFallback = { ...newLocation, address: "Selected Location" };
-      setMapSelectionState(prev => ({ ...prev, selectedLocation: locationWithFallback }));
+      console.error('❌ Error processing map press:', error);
+    } finally {
+      // Reset processing flag quickly to allow next selection
+      // This allows user to click multiple times to change selection
+      setTimeout(() => {
+        isProcessingMapPressRef.current = false;
+      }, 200); // Short delay (200ms) to allow async operations but enable multiple selections
     }
   }, [uiState.isMapSelectionMode, mapSelectionState.isSelecting, setMapSelectionState]);
 
   const confirmMapSelection = useCallback(async () => {
+    // CRITICAL: Guard against double-confirmation crashes
+    if (isConfirmingRef.current) {
+      if (__DEV__) {
+        console.log("⚠️ Confirmation already in progress, ignoring duplicate");
+      }
+      return;
+    }
+    
     if (!mapSelectionState.selectedLocation) {
-      console.log("❌ No location selected");
+      if (__DEV__) {
+        console.log("❌ No location selected");
+      }
       return;
     }
 
+    // Set confirmation flag
+    isConfirmingRef.current = true;
+    
     const selectedLocation = mapSelectionState.selectedLocation;
-    console.log("✅ Confirming map selection:", selectedLocation);
+    if (__DEV__) {
+      console.log("✅ Confirming map selection:", selectedLocation);
+    }
     
     try {
       // Set as destination
@@ -184,16 +329,23 @@ export const useMapSelectionHandlers = (
       
       // Ensure we have current location for route calculation
       if (!currentLocation) {
-        console.log("📍 Getting current location for route calculation...");
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-          maximumAge: 30000, // 30 seconds
-        });
-        const newLocation = {
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        };
-        setCurrentLocation(newLocation);
+        if (__DEV__) {
+          console.log("📍 Getting current location for route calculation...");
+        }
+        try {
+          const loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            maximumAge: 30000, // 30 seconds
+          });
+          const newLocation = {
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          };
+          setCurrentLocation(newLocation);
+        } catch (locationError) {
+          console.error("❌ Failed to get current location:", locationError);
+          // Continue without current location - it will be fetched later if needed
+        }
       }
       
       // Don't automatically update flow state here
@@ -201,9 +353,16 @@ export const useMapSelectionHandlers = (
       // (when route button is pressed and destination is selected)
       // The confirmMapSelectionWithFlowUpdate wrapper will handle flow state update if needed
       
-      console.log("✅ Map selection confirmed successfully");
+      if (__DEV__) {
+        console.log("✅ Map selection confirmed successfully");
+      }
     } catch (error) {
       console.error("❌ Error confirming map selection:", error);
+    } finally {
+      // Reset confirmation flag after a delay
+      setTimeout(() => {
+        isConfirmingRef.current = false;
+      }, 1000); // 1 second debounce
     }
   }, [
     mapSelectionState.selectedLocation, 

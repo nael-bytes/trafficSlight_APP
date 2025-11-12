@@ -57,6 +57,16 @@ interface UseTripManagementParams {
   resetDestinationFlow: () => void;
   lastProcessedDistanceRef: React.RefObject<number>;
   setShowTripRecovery: (show: boolean) => void;
+  // Callbacks for restoring trip state
+  setCurrentLocation?: (location: LocationCoords | null) => void;
+  setRegion?: (region: any) => void;
+  setPathCoords?: (coords: LocationCoords[]) => void;
+  setFinalPathCoords?: (coords: LocationCoords[]) => void;
+  setDistanceTraveled?: (distance: number) => void;
+  startTracking?: () => Promise<void> | void;
+  setDestination?: (destination: LocationCoords | null) => void;
+  setIsNavigating?: (isNavigating: boolean) => void;
+  setNavigationStartTime?: (time: number | null) => void;
 }
 
 interface UseTripManagementReturn {
@@ -103,6 +113,15 @@ export const useTripManagement = ({
     resetDestinationFlow,
     lastProcessedDistanceRef,
     setShowTripRecovery,
+    setCurrentLocation,
+    setRegion,
+    setPathCoords,
+    setFinalPathCoords,
+    setDistanceTraveled,
+    startTracking,
+    setDestination,
+    setIsNavigating,
+    setNavigationStartTime,
 }: UseTripManagementParams): UseTripManagementReturn => {
   // Create trip data for modal display
   const createTripDataForModal = useCallback((tripEndTime: Date, hasArrived: boolean = false) => {
@@ -488,21 +507,148 @@ export const useTripManagement = ({
         });
       }
 
-      // Restore trip state
+      // CRITICAL: Restore all trip state
+      // 1. Restore screen mode
       setScreenMode(currentTrip.screenMode);
-      // Note: setCurrentLocation and setRegion should be passed as callbacks
-      // setCurrentLocation(currentTrip.currentLocation);
-      // setRegion(currentTrip.region);
-      setSelectedMotor(currentTrip.selectedMotor);
-      setStartAddress(currentTrip.startAddress);
-      setEndAddress(currentTrip.endAddress);
-      setTripMaintenanceActions(currentTrip.tripMaintenanceActions);
 
-      // Restore tracking state if it was tracking
+      // 2. Restore location and region
+      if (setCurrentLocation && currentTrip.currentLocation) {
+        setCurrentLocation(currentTrip.currentLocation);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored current location:', currentTrip.currentLocation);
+        }
+      }
+
+      if (setRegion && currentTrip.region) {
+        setRegion(currentTrip.region);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored region:', currentTrip.region);
+        }
+      }
+
+      // 3. Restore destination if it exists
+      if (setDestination && currentTrip.endLocation) {
+        const destination: LocationCoords = {
+          latitude: currentTrip.endLocation.latitude || currentTrip.endLocation.lat,
+          longitude: currentTrip.endLocation.longitude || currentTrip.endLocation.lng,
+          address: currentTrip.endAddress || 'Recovered Destination',
+        };
+        setDestination(destination);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored destination:', destination);
+        }
+      }
+
+      // 4. Restore motor
+      if (currentTrip.selectedMotor) {
+        setSelectedMotor(currentTrip.selectedMotor);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored motor:', currentTrip.selectedMotor.nickname);
+        }
+      }
+
+      // 5. Restore addresses
+      if (currentTrip.startAddress) {
+        setStartAddress(currentTrip.startAddress);
+      }
+      if (currentTrip.endAddress) {
+        setEndAddress(currentTrip.endAddress);
+      }
+
+      // 6. Restore maintenance actions
+      if (currentTrip.tripMaintenanceActions && Array.isArray(currentTrip.tripMaintenanceActions)) {
+        setTripMaintenanceActions(currentTrip.tripMaintenanceActions);
+      }
+
+      // 7. Restore route coordinates
+      if (setPathCoords && currentTrip.routeCoordinates && Array.isArray(currentTrip.routeCoordinates)) {
+        setPathCoords(currentTrip.routeCoordinates);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored route coordinates:', currentTrip.routeCoordinates.length);
+        }
+      }
+
+      if (setFinalPathCoords && currentTrip.snappedRouteCoordinates && Array.isArray(currentTrip.snappedRouteCoordinates)) {
+        setFinalPathCoords(currentTrip.snappedRouteCoordinates);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored snapped route coordinates:', currentTrip.snappedRouteCoordinates.length);
+        }
+      }
+
+      // 8. Restore distance traveled
+      if (setDistanceTraveled && currentTrip.rideStats?.distance) {
+        setDistanceTraveled(currentTrip.rideStats.distance);
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored distance traveled:', currentTrip.rideStats.distance);
+        }
+      }
+
+      // 9. Restore last processed distance ref
+      if (lastProcessedDistanceRef.current !== undefined && currentTrip.rideStats?.distance) {
+        lastProcessedDistanceRef.current = currentTrip.rideStats.distance;
+        if (__DEV__) {
+          console.log('[useTripManagement] ✅ Restored last processed distance:', lastProcessedDistanceRef.current);
+        }
+      }
+
+      // 10. Restore tracking state if it was tracking
       if (currentTrip.isTracking) {
-        // Note: You might need to restore tracking state here
-        // This depends on your useTracking hook implementation
-        console.log('[useTripManagement] Trip was tracking, restoring tracking state...');
+        if (__DEV__) {
+          console.log('[useTripManagement] 🔄 Trip was tracking, restoring tracking state...');
+        }
+
+        // Reset tracking first to clear any existing state
+        resetTracking();
+
+        // Restore navigation state
+        if (setIsNavigating) {
+          setIsNavigating(true);
+        }
+
+        if (setNavigationStartTime && currentTrip.startTime) {
+          // Use original start time, not current time, to preserve elapsed time
+          setNavigationStartTime(currentTrip.startTime);
+          if (__DEV__) {
+            console.log('[useTripManagement] ✅ Restored navigation start time:', new Date(currentTrip.startTime).toISOString());
+          }
+        }
+
+        // Restore background tracking state if applicable
+        if (isBackgroundTracking && currentTrip.isBackgroundTracking !== undefined) {
+          isBackgroundTracking.current = currentTrip.isBackgroundTracking;
+        }
+
+        if (backgroundTrackingId && currentTrip.backgroundTrackingId) {
+          backgroundTrackingId.current = currentTrip.backgroundTrackingId;
+        }
+
+        // Restart tracking with restored state
+        if (startTracking) {
+          try {
+            await startTracking();
+            if (__DEV__) {
+              console.log('[useTripManagement] ✅ Tracking restarted successfully');
+            }
+          } catch (error) {
+            if (__DEV__) {
+              console.error('[useTripManagement] ❌ Failed to restart tracking:', error);
+            }
+            Toast.show({
+              type: 'warning',
+              text1: 'Tracking Restart Failed',
+              text2: 'Trip recovered but tracking could not be restarted. Please start manually.',
+            });
+          }
+        } else {
+          if (__DEV__) {
+            console.warn('[useTripManagement] ⚠️ startTracking callback not provided, cannot restart tracking');
+          }
+        }
+      } else {
+        // Trip was not tracking, just restore state
+        if (__DEV__) {
+          console.log('[useTripManagement] ℹ️ Trip was not tracking, state restored');
+        }
       }
 
       // Close recovery modal
@@ -535,7 +681,28 @@ export const useTripManagement = ({
         text2: 'Failed to recover trip data',
       });
     }
-  }, [currentTrip, setScreenMode, setSelectedMotor, setStartAddress, setEndAddress, setTripMaintenanceActions, setShowTripRecovery]);
+  }, [
+    currentTrip,
+    setScreenMode,
+    setSelectedMotor,
+    setStartAddress,
+    setEndAddress,
+    setTripMaintenanceActions,
+    setShowTripRecovery,
+    setCurrentLocation,
+    setRegion,
+    setPathCoords,
+    setFinalPathCoords,
+    setDistanceTraveled,
+    startTracking,
+    setDestination,
+    setIsNavigating,
+    setNavigationStartTime,
+    resetTracking,
+    isBackgroundTracking,
+    backgroundTrackingId,
+    lastProcessedDistanceRef,
+  ]);
 
   // Handle trip discard
   const handleDiscardTrip = useCallback(async () => {

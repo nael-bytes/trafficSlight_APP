@@ -134,6 +134,7 @@ export interface MapComponentProps {
   onReportVoted?: () => void; // Callback to refresh reports data after vote
   onMapPress?: (event: any) => void; // Callback for map press events
   selectedMapLocation?: LocationCoords | null; // Selected location for map selection
+  isMapSelectionMode?: boolean; // Whether map selection mode is active
   mapFilters?: any; // Map filter configuration
   onRegionChange?: (region: any) => void; // Callback when user manually pans the map
   onRegionChangeComplete?: (region: any) => void; // Callback when region change completes

@@ -482,6 +482,11 @@ const arePropsEqual = (prevProps: MapComponentProps, nextProps: MapComponentProp
   if (prevProps.mapFilters?.showCongestion !== nextProps.mapFilters?.showCongestion) return false;
   if (prevProps.mapFilters?.showHazards !== nextProps.mapFilters?.showHazards) return false;
   
+  // Compare map selection mode - if it changes, component needs to update
+  if (prevProps.isMapSelectionMode !== nextProps.isMapSelectionMode) return false;
+  if (prevProps.selectedMapLocation?.latitude !== nextProps.selectedMapLocation?.latitude) return false;
+  if (prevProps.selectedMapLocation?.longitude !== nextProps.selectedMapLocation?.longitude) return false;
+  
   // If all critical props are equal, skip re-render
   return true;
 };
@@ -506,6 +511,7 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
   onReportVoted,
   onMapPress,
   selectedMapLocation,
+  isMapSelectionMode = false,
   mapFilters,
   onRegionChange,
   onRegionChangeComplete,
@@ -648,6 +654,11 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     selectedCluster: null,
     currentZoom: initialZoom,
   });
+
+  // Track map center coordinate for map selection mode
+  const [mapCenterCoordinate, setMapCenterCoordinate] = useState<LocationCoords | null>(
+    region ? { latitude: region.latitude, longitude: region.longitude } : null
+  );
 
   // Track icon preload state to ensure icons are ready before rendering markers
   // CRITICAL: Start with true if icons are already preloaded (from app startup)
@@ -1492,6 +1503,28 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     }
 
     try {
+      // CRITICAL: When in map selection mode, update center coordinate based on region center
+      // This allows the destination marker to follow the map center as user pans
+      if (isMapSelectionMode && region?.latitude && region?.longitude) {
+        const centerCoord: LocationCoords = {
+          latitude: region.latitude,
+          longitude: region.longitude,
+        };
+        
+        // Update center coordinate state
+        setMapCenterCoordinate(centerCoord);
+        
+        // Update selected location via onMapPress callback
+        // This ensures parent component knows about the new center location
+        if (onMapPress) {
+          onMapPress({
+            nativeEvent: {
+              coordinate: centerCoord,
+            },
+          });
+        }
+      }
+
       // Clamp latitudeDelta to prevent division by zero or invalid calculations
       const safeDelta = Math.max(0.0001, Math.min(180, region.latitudeDelta));
       const zoom = Math.round(Math.log2(360 / safeDelta));
@@ -1529,7 +1562,7 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     if (onRegionChange) {
       onRegionChange(region);
     }
-  }, [onRegionChange, isFocused]);
+  }, [onRegionChange, isFocused, isMapSelectionMode, onMapPress]);
 
   const handleRegionChangeComplete = useCallback((region: any) => {
     // CRITICAL: Skip region change complete updates when screen is not focused
@@ -1543,6 +1576,28 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     }
 
     try {
+      // CRITICAL: When in map selection mode, update center coordinate when panning completes
+      // This ensures the final selected location is accurate
+      if (isMapSelectionMode && region?.latitude && region?.longitude) {
+        const centerCoord: LocationCoords = {
+          latitude: region.latitude,
+          longitude: region.longitude,
+        };
+        
+        // Update center coordinate state
+        setMapCenterCoordinate(centerCoord);
+        
+        // Update selected location via onMapPress callback
+        // This ensures parent component knows about the final center location
+        if (onMapPress) {
+          onMapPress({
+            nativeEvent: {
+              coordinate: centerCoord,
+            },
+          });
+        }
+      }
+
       // Clamp latitudeDelta to prevent division by zero or invalid calculations
       const safeDelta = Math.max(0.0001, Math.min(180, region.latitudeDelta));
       const zoom = Math.round(Math.log2(360 / safeDelta));
@@ -1578,7 +1633,7 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     if (onRegionChangeComplete) {
       onRegionChangeComplete(region);
     }
-  }, [onRegionChangeComplete, isFocused]);
+  }, [onRegionChangeComplete, isFocused, isMapSelectionMode, onMapPress]);
 
   // Initialize silent vote counts for all reports
   // CRITICAL: Skip vote initialization when screen is not focused
@@ -1629,18 +1684,28 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     // CRITICAL FIX: Ensure adjustedRegion is always valid before using
     const validRegion = adjustedRegion || defaultRegion;
     
+    // CRITICAL: When entering map selection mode, initialize center coordinate
+    if (isMapSelectionMode && validRegion && !mapCenterCoordinate) {
+      setMapCenterCoordinate({
+        latitude: validRegion.latitude,
+        longitude: validRegion.longitude,
+      });
+    }
+    
     if (validRegion && stableRegionRef.current) {
       const latDiff = Math.abs((stableRegionRef.current.latitude || 0) - (validRegion.latitude || 0));
       const lngDiff = Math.abs((stableRegionRef.current.longitude || 0) - (validRegion.longitude || 0));
       const deltaDiff = Math.abs((stableRegionRef.current.latitudeDelta || 0) - (validRegion.latitudeDelta || 0));
       
+      // CRITICAL: In map selection mode, don't auto-animate to region
+      // User should be able to pan freely without the map jumping
       // Only update if region changed significantly (location > 0.01 degrees OR zoom changed by > 0.01)
       if (latDiff > 0.01 || lngDiff > 0.01 || deltaDiff > 0.01) {
         stableRegionRef.current = validRegion;
         setStableRegion(validRegion);
         
-        // Use animateToRegion for smooth updates (but only if map ref is available)
-        if (mapRef?.current) {
+        // Use animateToRegion for smooth updates (but only if map ref is available and NOT in map selection mode)
+        if (mapRef?.current && !isMapSelectionMode) {
           // Use setTimeout to prevent state updates during render
           setTimeout(() => {
             if (mapRef?.current) {
@@ -1657,7 +1722,7 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
       stableRegionRef.current = defaultRegion;
       setStableRegion(defaultRegion);
     }
-  }, [adjustedRegion, mapRef, defaultRegion, isFocused]);
+  }, [adjustedRegion, mapRef, defaultRegion, isFocused, isMapSelectionMode, mapCenterCoordinate]);
 
   // CRITICAL FIX: Ensure region is always valid before passing to MapView
   // This prevents "Cannot read property 'latitude' of undefined" errors
@@ -1825,7 +1890,15 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
         showsTraffic={true}
         showsMyLocationButton={false}
         showsCompass={true}
-        onPress={onMapPress}
+        onPress={(event) => {
+          // CRITICAL: In map selection mode, don't handle tap presses
+          // The center marker follows the map center automatically via onRegionChange
+          // User should pan the map to move the marker, not tap
+          if (!isMapSelectionMode && onMapPress) {
+            // Normal map press handling (only when not in selection mode)
+            onMapPress(event);
+          }
+        }}
         onRegionChange={handleRegionChange}
         onRegionChangeComplete={handleRegionChangeComplete}
         zoomEnabled={true}
@@ -1855,11 +1928,14 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
         )}
 
 
-        {/* Destination marker */}
-        <DestinationMarker destination={destination} />
+        {/* Destination marker - Only show when NOT in map selection mode */}
+        {!isMapSelectionMode && <DestinationMarker destination={destination} />}
 
-        {/* Selected map location marker */}
-        <SelectedLocationMarker selectedMapLocation={selectedMapLocation} />
+        {/* Center destination marker - Only show when in map selection mode */}
+        {/* This marker is always at the center of the map view */}
+
+        {/* Selected map location marker - Only show when NOT in map selection mode */}
+        {!isMapSelectionMode && <SelectedLocationMarker selectedMapLocation={selectedMapLocation} />}
 
         {/* Clustered markers (when zoomed out) */}
         {state.currentZoom <= 10 && clusters.length > 0 && (
@@ -1972,6 +2048,23 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
   return (
     <View style={styles.container}>
       {renderMapView()}
+
+      {/* Center destination marker overlay - Always at screen center when in map selection mode */}
+      {/* This is an overlay, not a map marker, so it stays fixed at screen center */}
+      {isMapSelectionMode && (
+        <View style={styles.centerMarkerOverlay} pointerEvents="none">
+          <View style={styles.centerMarkerContainer}>
+            <View style={styles.centerMarkerPin}>
+              <Image 
+                source={require('../../assets/icons/DESTINATION MARKER.png')} 
+                style={[styles.destinationMarker, { width: 50, height: 50 }]} 
+                resizeMode="contain"
+              />
+            </View>
+            <View style={styles.centerMarkerDot} />
+          </View>
+        </View>
+      )}
 
       {/* Selected report card */}
       {state.selectedReport && (
@@ -2637,6 +2730,45 @@ const styles = StyleSheet.create({
     top: 8,
     right: 8,
     padding: 4,
+  },
+  centerMarkerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    pointerEvents: 'none', // Allow touches to pass through to map
+    zIndex: 1000,
+  },
+  centerMarkerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 50,
+    height: 50,
+  },
+  centerMarkerPin: {
+    width: 50,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  centerMarkerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#00ADB5',
+    borderWidth: 2,
+    borderColor: '#fff',
+    position: 'absolute',
+    top: 19, // Position at center of pin (50px height / 2 - 6px radius = 19px)
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
   },
 });
 

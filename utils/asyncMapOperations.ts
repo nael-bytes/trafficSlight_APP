@@ -48,29 +48,41 @@ export const fetchRoutesAsync = async (
     avoid?: string[];
   } = {}
 ): Promise<RouteData[]> => {
-  const result = await runAsyncOperation(async () => {
-    const {
-      alternatives = true,
-      departureTime = 'now',
-      trafficModel = 'best_guess',
-      avoid = ['tolls'],
-    } = options;
+  // CRITICAL OPTIMIZATION: Remove double async wrapping
+  // fetchRoutesAsync is already called from runAsyncOperation in destinationFlowManager
+  // So we should make the actual API call directly without another runAsyncOperation wrapper
+  const {
+    alternatives = true,
+    departureTime = 'now',
+    trafficModel = 'best_guess',
+    avoid = ['tolls'],
+  } = options;
 
-    const baseUrl = 'https://maps.googleapis.com/maps/api/directions/json';
-    const params = new URLSearchParams({
-      origin: `${origin.latitude},${origin.longitude}`,
-      destination: `${destination.latitude},${destination.longitude}`,
-      alternatives: alternatives.toString(),
-      departure_time: departureTime,
-      traffic_model: trafficModel,
-      avoid: avoid.join('|'),
-      key: GOOGLE_MAPS_API_KEY,
-    });
+  const baseUrl = 'https://maps.googleapis.com/maps/api/directions/json';
+  const params = new URLSearchParams({
+    origin: `${origin.latitude},${origin.longitude}`,
+    destination: `${destination.latitude},${destination.longitude}`,
+    alternatives: alternatives.toString(),
+    departure_time: departureTime,
+    traffic_model: trafficModel,
+    avoid: avoid.join('|'),
+    key: GOOGLE_MAPS_API_KEY,
+  });
 
-    const url = `${baseUrl}?${params.toString()}`;
-    console.log('[AsyncMapOperations] Fetching routes from:', url);
+  const url = `${baseUrl}?${params.toString()}`;
+  if (__DEV__) {
+    console.log('[AsyncMapOperations] Fetching routes from Google Maps API');
+  }
 
-    const response = await fetch(url);
+  // CRITICAL: Use Promise.race with timeout for faster failure detection
+  const timeoutMs = 10000; // Reduced from 15s to 10s for faster response
+  const fetchPromise = fetch(url);
+  const timeoutPromise = new Promise<never>((_, reject) => 
+    setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
+  );
+
+  try {
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
     const data: DirectionsResponse = await response.json();
 
     if (data.status !== 'OK') {
@@ -78,17 +90,12 @@ export const fetchRoutesAsync = async (
     }
 
     return data.routes;
-  }, {
-    priority: 'high',
-    timeout: 15000,
-    retries: 2,
-  });
-
-  if (!result.success || !result.data) {
-    throw new Error(result.error?.message || 'Failed to fetch routes');
+  } catch (error) {
+    if (__DEV__) {
+      console.error('[AsyncMapOperations] Route fetch error:', error);
+    }
+    throw error;
   }
-
-  return result.data;
 };
 
 /**

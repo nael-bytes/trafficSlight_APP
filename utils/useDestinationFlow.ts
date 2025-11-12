@@ -129,27 +129,64 @@ export const useDestinationFlow = ({
 
   // Custom confirm map selection that also updates destination flow state
   // Only updates flow state if we're already in destination flow (route button was pressed)
-  const confirmMapSelectionWithFlowUpdate = useCallback(async (confirmMapSelection: () => Promise<void>) => {
+  const confirmMapSelectionWithFlowUpdate = useCallback(async (confirmMapSelection: () => Promise<void>, destinationOverride?: any) => {
     await confirmMapSelection();
+    
+    // CRITICAL: Use destinationOverride if provided (from map selection), otherwise use mapState.destination
+    // This ensures we have the destination immediately without waiting for state updates
+    // This matches the behavior of handleDestinationSelect in destinationFlowManager
+    const destination = destinationOverride || mapState.destination;
+    
     // Only update destination flow state if we're already in destination flow
     // This ensures "Find the best routes" only shows when explicitly in destination flow
     const currentState = destinationFlow.destinationFlowState.currentFlowState;
     if (currentState === 'searching' || currentState === 'destination_selected' || currentState === 'routes_found') {
       // We're in destination flow, update state to destination_selected
       destinationFlow.updateDestinationFlowState({ currentFlowState: 'destination_selected' });
-      // Automatically fetch routes after confirming map selection
-      if (mapState.destination) {
-        await destinationFlow.fetchRoutes();
-      }
     } else {
       // If not in destination flow, activate it now since user selected a destination
       destinationFlow.updateDestinationFlowState({ currentFlowState: 'destination_selected' });
-      // Automatically fetch routes after confirming map selection
-      if (mapState.destination) {
-        await destinationFlow.fetchRoutes();
-      }
     }
-  }, [destinationFlow.updateDestinationFlowState, destinationFlow.destinationFlowState.currentFlowState, destinationFlow.fetchRoutes, mapState.destination]);
+    
+    // CRITICAL: Automatically fetch routes after confirming map selection
+    // Use the same pattern as handleDestinationSelect - pass destination directly to fetchRoutes
+    // This ensures routes are fetched even if state hasn't fully updated yet
+    if (destination && mapState.currentLocation && selectedMotor) {
+      if (__DEV__) {
+        console.log('[useDestinationFlow] 🚀 Fetching routes after map selection confirmation', {
+          destination,
+          currentLocation: mapState.currentLocation,
+          selectedMotor: selectedMotor._id,
+        });
+      }
+      // Fetch routes with destination parameter to bypass state update delay
+      // This ensures routes are fetched immediately, same as when selecting from search/recent/saved
+      await destinationFlow.fetchRoutes(destination);
+    } else {
+      // Fallback: Try again after state update in case immediate fetch failed
+      setTimeout(async () => {
+        const updatedDestination = mapState.destination;
+        if (updatedDestination && mapState.currentLocation && selectedMotor) {
+          if (__DEV__) {
+            console.log('[useDestinationFlow] ✅ Retrying route fetch after state update', {
+              destination: updatedDestination,
+              currentLocation: mapState.currentLocation,
+              selectedMotor: selectedMotor._id,
+            });
+          }
+          await destinationFlow.fetchRoutes(updatedDestination);
+        } else {
+          if (__DEV__) {
+            console.warn('[useDestinationFlow] ⚠️ Cannot auto-fetch routes - missing data:', {
+              hasDestination: !!updatedDestination,
+              hasCurrentLocation: !!mapState.currentLocation,
+              hasSelectedMotor: !!selectedMotor,
+            });
+          }
+        }
+      }, 300); // Fallback timeout
+    }
+  }, [destinationFlow.updateDestinationFlowState, destinationFlow.destinationFlowState.currentFlowState, destinationFlow.fetchRoutes, mapState.destination, mapState.currentLocation, selectedMotor]);
 
   // Reset destination flow to initial state
   const resetDestinationFlow = useCallback(() => {

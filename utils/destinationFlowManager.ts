@@ -126,6 +126,8 @@ export const useDestinationFlow = (
     });
 
     try {
+      // CRITICAL OPTIMIZATION: Use direct API call with single retry for faster response
+      // Reduced timeout and retries for better user experience
       const result = await runAsyncOperation(async () => {
         return await fetchRoutesAsync(mapState.currentLocation!, destination, {
           alternatives: true,
@@ -134,9 +136,9 @@ export const useDestinationFlow = (
           avoid: ['tolls'],
         });
       }, {
-        priority: 'high',
-        timeout: 15000,
-        retries: 2,
+        priority: 'high', // High priority = runs immediately, no InteractionManager delay
+        timeout: 10000, // Reduced from 15s to 10s for faster failure detection
+        retries: 1, // Reduced from 2 to 1 for faster response (still allows one retry)
       });
 
       if (result.success && result.data) {
@@ -198,28 +200,28 @@ export const useDestinationFlow = (
           }
         }).filter(Boolean); // Remove null routes
         
-        // Update state asynchronously
-        scheduleUIUpdate(() => {
-          if (processedRoutes.length > 0) {
-            const mainRoute = processedRoutes[0];
-            const alternatives = processedRoutes.slice(1);
-            
-            // Set the main route as trip summary and selected route
-            setTripSummary(mainRoute);
-            setSelectedRoute(mainRoute);
-            setSelectedRouteId(mainRoute.id);
-            setAlternativeRoutes(alternatives);
-            
-            setCurrentFlowState('routes_found');
-            // Open the bottom sheet to show routes
-            updateUiState({ showBottomSheet: true });
-          } else {
-            console.warn('No valid routes processed');
-            updateDestinationFlowState({ 
-              asyncErrors: { ...destinationFlowState.asyncErrors, routes: 'No valid routes found' }
-            });
-          }
-        });
+        // CRITICAL OPTIMIZATION: Update state immediately instead of using scheduleUIUpdate
+        // scheduleUIUpdate adds delay via requestAnimationFrame + InteractionManager
+        // For route results, we want immediate UI update for better UX
+        if (processedRoutes.length > 0) {
+          const mainRoute = processedRoutes[0];
+          const alternatives = processedRoutes.slice(1);
+          
+          // Set the main route as trip summary and selected route
+          setTripSummary(mainRoute);
+          setSelectedRoute(mainRoute);
+          setSelectedRouteId(mainRoute.id);
+          setAlternativeRoutes(alternatives);
+          
+          setCurrentFlowState('routes_found');
+          // Open the bottom sheet to show routes
+          updateUiState({ showBottomSheet: true });
+        } else {
+          console.warn('No valid routes processed');
+          updateDestinationFlowState({ 
+            asyncErrors: { ...destinationFlowState.asyncErrors, routes: 'No valid routes found' }
+          });
+        }
 
         console.log(`[DestinationFlow] Fetched ${processedRoutes.length} routes asynchronously`);
         console.log('[DestinationFlow] Processed routes data:', processedRoutes);

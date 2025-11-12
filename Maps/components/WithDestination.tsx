@@ -97,6 +97,9 @@ interface WithDestinationProps {
   onGetRoutes?: () => void; // Callback to fetch routes
   isRoutesLoading?: boolean; // Whether routes are being fetched
   isMapSelectionActive?: boolean; // Whether map selection is currently active
+  mapFilters?: { showTrafficReports: boolean; showGasStations: boolean }; // Map filter state for marker visibility
+  onToggleMarkersVisibility?: () => void; // Callback to toggle markers visibility
+  onShowFilterModal?: () => void; // Callback to show filter modal (long press)
 }
 
 /**
@@ -170,6 +173,9 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
   onGetRoutes,
   isRoutesLoading = false,
   isMapSelectionActive = false,
+  mapFilters,
+  onToggleMarkersVisibility,
+  onShowFilterModal,
 }) => {
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [showMotorSelectionModal, setShowMotorSelectionModal] = useState(false);
@@ -643,16 +649,30 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
               </View>
             )}
             <View style={styles.confirmationButtons}>
+              {/* View Route Details Button - Replaces Cancel button */}
               <TouchableOpacity
-                style={[styles.confirmationButton, styles.cancelButton]}
-                onPress={closeAllModals}
+                style={[styles.confirmationButton, styles.viewRouteDetailsButton]}
+                onPress={() => {
+                  // Close confirmation modal and show route details modal again
+                  setShowConfirmationModal(false);
+                  setShowRouteSelectionModal(true);
+                  setRouteModalManuallyClosed(false); // Allow modal to show again
+                  if (__DEV__) {
+                    console.log('[WithDestination] View Route Details pressed, reopening route selection modal');
+                  }
+                }}
+                activeOpacity={0.7}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <MaterialIcons name="visibility" size={20} color="#00ADB5" style={{ marginRight: 8 }} />
+                <Text style={styles.viewRouteDetailsButtonText}>View Route Details</Text>
               </TouchableOpacity>
+              {/* Start Navigation Button - Green */}
               <TouchableOpacity
                 style={[styles.confirmationButton, styles.startButton]}
                 onPress={confirmStartNavigation}
+                activeOpacity={0.7}
               >
+                <MaterialIcons name="navigation" size={20} color="#FFF" style={{ marginRight: 8 }} />
                 <Text style={styles.startButtonText}>Start Navigation</Text>
               </TouchableOpacity>
             </View>
@@ -687,20 +707,23 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
             </View>
           )}
 
-          {/* Cancel Button - Return to original state */}
-          {/* Hide cancel button when map selection is active */}
-          {(destination || selectedRoute || selectedMotor) && onCancel && !isMapSelectionActive && (
+          {/* View Route Details Button - Reopens route selection modal if user pressed X */}
+          {/* Hide when map selection is active */}
+          {(destination || selectedRoute) && !isMapSelectionActive && (
             <TouchableOpacity
-              style={styles.cancelFlowButton}
+              style={styles.viewRouteDetailsFlowButton}
               onPress={() => {
-                closeAllModals();
-                if (onCancel) {
-                  onCancel();
+                // Reopen route selection modal so user can view routes again
+                setShowRouteSelectionModal(true);
+                setRouteModalManuallyClosed(false); // Allow modal to show
+                if (__DEV__) {
+                  console.log('[WithDestination] View Route Details pressed from pre-navigation controls, reopening route selection modal');
                 }
               }}
+              activeOpacity={0.7}
             >
-              <MaterialIcons name="close" size={20} color="#FFF" />
-              <Text style={styles.cancelFlowButtonText}>Cancel</Text>
+              <MaterialIcons name="visibility" size={20} color="#00ADB5" />
+              <Text style={styles.viewRouteDetailsFlowButtonText}>View Route Details</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -776,6 +799,32 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
             </TouchableOpacity>
           </View>
         </View>
+      )}
+
+      {/* Floating Action Button - Eye Button for Toggling Markers Visibility */}
+      {/* TAP: Toggles visibility (hides/shows all markers except user and destination) */}
+      {/* LONG PRESS: Opens filter modal */}
+      {onToggleMarkersVisibility && (
+        <TouchableOpacity
+          style={[
+            styles.eyeFAB,
+            {
+              backgroundColor: mapFilters?.showTrafficReports && mapFilters?.showGasStations
+                ? '#4CAF50'
+                : '#9E9E9E',
+            },
+          ]}
+          onPress={onToggleMarkersVisibility}
+          onLongPress={onShowFilterModal}
+          delayLongPress={500}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons
+            name="visibility"
+            size={24}
+            color={mapFilters?.showTrafficReports && mapFilters?.showGasStations ? '#FFF' : '#000'}
+          />
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -993,8 +1042,31 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  viewRouteDetailsButton: {
+    backgroundColor: '#FFF',
+    borderWidth: 2,
+    borderColor: '#00ADB5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#00ADB5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  viewRouteDetailsButtonText: {
+    color: '#00ADB5',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   startButton: {
     backgroundColor: '#4CAF50',
+    shadowColor: '#4CAF50',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
   startButtonText: {
     color: '#FFF',
@@ -1100,6 +1172,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
+  viewRouteDetailsFlowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF',
+    borderWidth: 2,
+    borderColor: '#00ADB5',
+    padding: 12,
+    borderRadius: 10,
+    marginTop: 10,
+    shadowColor: '#00ADB5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  viewRouteDetailsFlowButtonText: {
+    color: '#00ADB5',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
   
   // Navigation UI Styles
   navigationContainer: {
@@ -1161,6 +1255,24 @@ const styles = StyleSheet.create({
   },
   stopButtonText: {
     color: '#FFF',
+  },
+  // Eye FAB (Floating Action Button) Styles
+  // Positioned on the right side of the screen, similar to location button
+  eyeFAB: {
+    position: 'absolute',
+    right: 16,
+    bottom: 200, // Position above the pre-navigation controls and other bottom elements
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    zIndex: 2000,
   },
   // Rerouting Overlay Styles
   reroutingOverlay: {

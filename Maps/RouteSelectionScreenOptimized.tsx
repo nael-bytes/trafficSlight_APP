@@ -184,6 +184,7 @@ import { logMapPerformance } from './utils/performanceUtils';
 import { useMapInteraction } from './utils/useMapInteraction';
 import { useRerouting } from './utils/useRerouting';
 import { useArrivalDetection } from './utils/useArrivalDetection';
+import { haversineDistance } from './utils/geo';
 
 const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, route }: RouteSelectionScreenProps) {
   const { user, cachedMotors, cachedReports, cachedGasStations } = useUser();
@@ -501,6 +502,15 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
     selectedLocation: null as LocationCoords | null,
     isSelecting: false,
   });
+  
+  // CRITICAL: Centralized map selection active state for easier access
+  // This state is updated synchronously and checked immediately in handleMapPress
+  const [isMapSelectionActive, setIsMapSelectionActive] = useState(false);
+  
+  // CRITICAL: Guard against double-selection crashes
+  // Track if map press is currently being processed to prevent concurrent operations
+  const isProcessingMapPressRef = useRef(false);
+  const isConfirmingSelectionRef = useRef(false);
 
   // Track maintenance actions during current trip (declared early for use in maintenance form hook)
   const [tripMaintenanceActions, setTripMaintenanceActions] = useState<any[]>([]);
@@ -675,21 +685,96 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
     // Removed flowStateManager - flow state is now handled by confirmMapSelectionWithFlowUpdate wrapper
     undefined // flowStateManager is now optional and not used
   );
+  
+  // CRITICAL: Wrapper functions that update centralized state immediately
+  // These ensure map selection state is set synchronously for immediate access
+  const startMapSelection = useCallback(() => {
+    if (__DEV__) {
+      console.log('[RouteSelection] 🗺️ Starting map selection (centralized state)');
+    }
+    // Set centralized state immediately (synchronous)
+    setIsMapSelectionActive(true);
+    // Then call original handler (which also updates mapSelectionState and uiState)
+    originalStartMapSelection();
+  }, [originalStartMapSelection]);
+  
+  const stopMapSelection = useCallback(() => {
+    if (__DEV__) {
+      console.log('[RouteSelection] 🛑 Stopping map selection (centralized state)');
+    }
+    // Reset processing flags to prevent crashes
+    isProcessingMapPressRef.current = false;
+    isConfirmingSelectionRef.current = false;
+    
+    // Set centralized state immediately (synchronous)
+    setIsMapSelectionActive(false);
+    // Clear selected location
+    setMapSelectionState({ selectedLocation: null, isSelecting: false });
+    // Then call original cancel handler
+    cancelMapSelection();
+  }, [cancelMapSelection]);
+  
+  // Sync centralized state with mapSelectionState changes
+  // This ensures state stays in sync even if mapSelectionState is updated elsewhere
+  useEffect(() => {
+    // Keep centralized state in sync with mapSelectionState
+    if (mapSelectionState.isSelecting && !isMapSelectionActive) {
+      setIsMapSelectionActive(true);
+    } else if (!mapSelectionState.isSelecting && isMapSelectionActive && !uiState.isMapSelectionMode) {
+      // Only clear if uiState also confirms it's not active
+      setIsMapSelectionActive(false);
+    }
+  }, [mapSelectionState.isSelecting, uiState.isMapSelectionMode, isMapSelectionActive]);
 
   // Custom handleMapPress that handles gas station actions and map selection
   const handleMapPress = useCallback((event: any) => {
-    // CRITICAL: If in map selection mode, use the original map selection handler
-    // Check both uiState and mapSelectionState to handle timing issues
-    // CRITICAL FIX: Check mapSelectionState.isSelecting first (more reliable, updated synchronously)
-    if (mapSelectionState.isSelecting || uiState.isMapSelectionMode) {
+    // CRITICAL: Check centralized state first for immediate detection
+    // This ensures map selection works immediately after "Choose from Maps" is clicked
+    if (isMapSelectionActive || mapSelectionState.isSelecting || uiState.isMapSelectionMode) {
       if (__DEV__) {
         console.log('[RouteSelection] 🗺️ Map press in selection mode, calling original handler', {
+          isMapSelectionActive, // Check centralized state first
           isSelecting: mapSelectionState.isSelecting,
           isMapSelectionMode: uiState.isMapSelectionMode,
         });
       }
+      
+      // CRITICAL: Allow multiple selections until user confirms
+      // Only guard against concurrent processing (not multiple selections)
+      // User can click multiple times to change selection, but we prevent rapid concurrent processing
+      if (isProcessingMapPressRef.current) {
+        if (__DEV__) {
+          console.log('[RouteSelection] ⚠️ Map press processing in progress, queuing...');
+        }
+        // Queue the press after a short delay to allow current processing to complete
+        setTimeout(() => {
+          if (isMapSelectionActive || mapSelectionState.isSelecting || uiState.isMapSelectionMode) {
+            originalHandleMapPress(event);
+          }
+        }, 100); // Short delay to prevent concurrent processing
+        return;
+      }
+      
+      // Set processing flag to prevent concurrent processing (not multiple selections)
+      isProcessingMapPressRef.current = true;
+      
       // Call the original map selection handler to handle map selection logic
-      originalHandleMapPress(event);
+      // Wrap in try-catch to prevent crashes
+      try {
+        originalHandleMapPress(event);
+      } catch (error) {
+        if (__DEV__) {
+          console.error('[RouteSelection] ❌ Error in map press handler:', error);
+        }
+        // Reset flag on error
+        isProcessingMapPressRef.current = false;
+      } finally {
+        // Reset processing flag quickly to allow next selection
+        // This allows user to click multiple times to change selection
+        setTimeout(() => {
+          isProcessingMapPressRef.current = false;
+        }, 200); // Short delay (200ms) to allow async operations but enable multiple selections
+      }
       return;
     }
 
@@ -725,12 +810,62 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
 
     // Default map press handling
     originalHandleMapPress(event);
-  }, [originalHandleMapPress, uiState.isMapSelectionMode, mapSelectionState.isSelecting, setDestination, navigationState.isNavigating, selectedRoute, fetchRoutes, isDestinationFlowActive, handleDestinationSelect, startNavigationFlow]);
+  }, [originalHandleMapPress, isMapSelectionActive, uiState.isMapSelectionMode, mapSelectionState.isSelecting, setDestination, navigationState.isNavigating, selectedRoute, fetchRoutes, isDestinationFlowActive, handleDestinationSelect, startNavigationFlow]);
 
   // Custom confirm map selection that also updates destination flow state
+  // CRITICAL: Add guard against double-confirmation crashes
   const confirmMapSelectionWithFlowUpdateWrapper = useCallback(async () => {
-    await confirmMapSelectionWithFlowUpdate(confirmMapSelection);
-  }, [confirmMapSelectionWithFlowUpdate, confirmMapSelection]);
+    // Guard against double-confirmation
+    if (isConfirmingSelectionRef.current) {
+      if (__DEV__) {
+        console.log('[RouteSelection] ⚠️ Confirmation already in progress, ignoring duplicate confirmation');
+      }
+      return;
+    }
+    
+    // Check if location is selected
+    if (!mapSelectionState.selectedLocation) {
+      if (__DEV__) {
+        console.warn('[RouteSelection] ⚠️ No location selected, cannot confirm');
+      }
+      return;
+    }
+    
+    // Set confirmation flag
+    isConfirmingSelectionRef.current = true;
+    
+    // CRITICAL: Store the selected location before confirmation
+    // This ensures we have the destination even if state hasn't updated yet
+    const selectedLocation = mapSelectionState.selectedLocation;
+    
+    try {
+      if (__DEV__) {
+        console.log('[RouteSelection] ✅ Confirming map selection', {
+          location: selectedLocation,
+        });
+      }
+      
+      // Pass the selected location directly to confirmMapSelectionWithFlowUpdate
+      // This ensures routes are fetched immediately with the correct destination
+      await confirmMapSelectionWithFlowUpdate(confirmMapSelection, selectedLocation);
+      
+      // Reset processing flags after successful confirmation
+      isProcessingMapPressRef.current = false;
+      setIsMapSelectionActive(false);
+    } catch (error) {
+      if (__DEV__) {
+        console.error('[RouteSelection] ❌ Error confirming map selection:', error);
+      }
+      // Reset flags on error
+      isProcessingMapPressRef.current = false;
+      isConfirmingSelectionRef.current = false;
+    } finally {
+      // Reset confirmation flag after a delay
+      setTimeout(() => {
+        isConfirmingSelectionRef.current = false;
+      }, 1000); // 1 second debounce
+    }
+  }, [confirmMapSelectionWithFlowUpdate, confirmMapSelection, mapSelectionState.selectedLocation]);
 
   // REMOVED: tripMaintenanceActions - moved earlier for use in maintenance form hook
   
@@ -777,6 +912,16 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
     resetDestinationFlow,
     lastProcessedDistanceRef,
     setShowTripRecovery,
+    // Callbacks for restoring trip state
+    setCurrentLocation,
+    setRegion,
+    setPathCoords,
+    setFinalPathCoords,
+    setDistanceTraveled,
+    startTracking,
+    setDestination,
+    setIsNavigating,
+    setNavigationStartTime,
   });
   
   // Memoized callbacks for TripSummaryModal to prevent re-renders
@@ -1046,6 +1191,89 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
   // - useMotorDetails: Effect 7.5 (populate motor details)
   // - useTripManagement: Effect 10 (auto-save trip data), Effect 11 (check recoverable trip)
   // - useCacheManagement: Cache loading effects
+
+  // CRITICAL: Update navigation stats during destination navigation
+  // This effect calculates and updates distanceRemaining, currentEta, currentSpeed, and timeElapsed
+  useEffect(() => {
+    if (!navigationState.isNavigating || !isDestinationFlowActive || !mapState.destination) {
+      return;
+    }
+
+    // Update time elapsed based on navigation start time
+    if (navigationState.navigationStartTime) {
+      const elapsed = Math.floor((Date.now() - navigationState.navigationStartTime) / 1000);
+      setTimeElapsed(elapsed);
+    }
+
+    // Update current speed from rideStats (from useTracking hook)
+    if (rideStats?.speed !== undefined) {
+      setCurrentSpeed(rideStats.speed);
+    }
+
+    // Calculate distance remaining from current location to destination
+    if (mapState.currentLocation && mapState.destination) {
+      // Use haversineDistance for quick calculation (synchronous)
+      const distanceMeters = haversineDistance(
+        [mapState.currentLocation.longitude, mapState.currentLocation.latitude],
+        [mapState.destination.longitude, mapState.destination.latitude]
+      );
+      const distanceKm = distanceMeters / 1000; // Convert to kilometers
+      setDistanceRemaining(distanceKm);
+
+      // Calculate ETA based on remaining distance and current/average speed
+      const currentSpeedKmh = rideStats?.speed || rideStats?.avgSpeed || 0;
+      if (currentSpeedKmh > 0 && distanceKm > 0) {
+        // ETA in seconds = (distance in km / speed in km/h) * 3600
+        const etaSeconds = Math.max(0, Math.round((distanceKm / currentSpeedKmh) * 3600));
+        // Format ETA as string (e.g., "5m" or "1h 30m")
+        const hours = Math.floor(etaSeconds / 3600);
+        const minutes = Math.floor((etaSeconds % 3600) / 60);
+        const etaString = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+        setCurrentEta(etaString);
+      } else if (selectedRoute && selectedRoute.duration) {
+        // Fallback: Use route duration minus elapsed time
+        const remainingTimeSeconds = Math.max(0, selectedRoute.duration - (navigationState.timeElapsed || 0));
+        const hours = Math.floor(remainingTimeSeconds / 3600);
+        const minutes = Math.floor((remainingTimeSeconds % 3600) / 60);
+        const etaString = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+        setCurrentEta(etaString);
+      } else {
+        setCurrentEta(null);
+      }
+    } else {
+      // No current location or destination, set defaults
+      setDistanceRemaining(0);
+      setCurrentEta(null);
+    }
+  }, [
+    navigationState.isNavigating,
+    navigationState.navigationStartTime,
+    navigationState.timeElapsed,
+    isDestinationFlowActive,
+    mapState.currentLocation,
+    mapState.destination,
+    rideStats?.speed,
+    rideStats?.avgSpeed,
+    selectedRoute,
+    setTimeElapsed,
+    setCurrentSpeed,
+    setDistanceRemaining,
+    setCurrentEta,
+  ]);
+
+  // Timer effect: Update timeElapsed every second during navigation
+  useEffect(() => {
+    if (!navigationState.isNavigating || !navigationState.navigationStartTime || !isDestinationFlowActive) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - navigationState.navigationStartTime!) / 1000);
+      setTimeElapsed(elapsed);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [navigationState.isNavigating, navigationState.navigationStartTime, isDestinationFlowActive, setTimeElapsed]);
 
   // CRITICAL FIX: Cleanup effect to prevent memory leaks
   useEffect(() => {
@@ -1426,7 +1654,22 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                 isNavigating={navigationState.isNavigating}
                 distanceRemaining={navigationState.distanceRemaining}
                 timeElapsed={navigationState.timeElapsed}
-                currentEta={typeof navigationState.currentEta === 'number' ? navigationState.currentEta : 0}
+                currentEta={(() => {
+                  // Convert ETA string to seconds for WithDestination component
+                  // WithDestination expects number (seconds) and uses formatTime()
+                  if (typeof navigationState.currentEta === 'number') {
+                    return navigationState.currentEta;
+                  }
+                  if (typeof navigationState.currentEta === 'string' && navigationState.currentEta) {
+                    // Parse string like "5m" or "1h 30m" to seconds
+                    const hoursMatch = navigationState.currentEta.match(/(\d+)h/);
+                    const minutesMatch = navigationState.currentEta.match(/(\d+)m/);
+                    const hours = hoursMatch ? parseInt(hoursMatch[1], 10) : 0;
+                    const minutes = minutesMatch ? parseInt(minutesMatch[1], 10) : 0;
+                    return (hours * 3600) + (minutes * 60);
+                  }
+                  return 0;
+                })()}
                 currentSpeed={navigationState.currentSpeed}
                 distanceTraveled={distanceTraveled}
                 onSelectMotor={handleMotorSelect}
@@ -1446,8 +1689,9 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                   if (!isDestinationFlowActive) {
                     handleRouteButtonPress();
                   }
-                  // Directly activate map selection mode
-                  originalStartMapSelection();
+                  // CRITICAL: Use centralized startMapSelection function
+                  // This ensures state is set synchronously for immediate access
+                  startMapSelection();
                 }}
                 onCancel={() => {
                   // Cancel destination flow and return to original state
@@ -1456,7 +1700,7 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                 currentFlowState={getCurrentFlowState()}
                 onGetRoutes={() => fetchRoutes()}
                 isRoutesLoading={destinationFlow?.destinationFlowState?.asyncLoading?.routes || false}
-                isMapSelectionActive={mapSelectionState.isSelecting || uiState.isMapSelectionMode}
+                isMapSelectionActive={isMapSelectionActive || mapSelectionState.isSelecting || uiState.isMapSelectionMode}
                 onStartNavigation={() => {
                   if (selectedRoute) {
                     // Start navigation with selected route
@@ -1539,6 +1783,9 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                 onReroute={() => fetchRoutes()}
                 onMaintenanceAction={handleMaintenanceAction}
                 motorList={effectiveMotors as Motor[]}
+                mapFilters={mapFilters}
+                onToggleMarkersVisibility={toggleMarkersVisibility}
+                onShowFilterModal={() => openFilterModal()}
               />
               )}
 
@@ -1723,6 +1970,7 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                   onReportVoted={memoizedRefreshData}
                   onMapPress={handleMapPress}
                   selectedMapLocation={mapSelectionState.selectedLocation}
+                  isMapSelectionMode={isMapSelectionActive || mapSelectionState.isSelecting || uiState.isMapSelectionMode}
                   mapFilters={mapFilters}
                   onRegionChange={handleManualPan}
                   onRegionChangeComplete={handleManualPan}
@@ -1783,8 +2031,9 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                   if (!isDestinationFlowActive) {
                     handleRouteButtonPress();
                   }
-                  // Start map selection mode properly
-                  originalStartMapSelection();
+                  // CRITICAL: Use centralized startMapSelection function
+                  // This ensures state is set synchronously for immediate access
+                  startMapSelection();
                 }}
               />
 
@@ -1888,12 +2137,13 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
 
               {/* Map Selection Overlay */}
               <MapSelectionOverlay
-                visible={mapSelectionState.isSelecting}
+                visible={isMapSelectionActive || mapSelectionState.isSelecting}
                 selectedLocation={mapSelectionState.selectedLocation}
                 onConfirm={confirmMapSelectionWithFlowUpdateWrapper}
-                onCancel={cancelMapSelection}
+                onCancel={stopMapSelection}
                 onClear={() => {
                   setMapSelectionState({ selectedLocation: null, isSelecting: false });
+                  setIsMapSelectionActive(false);
                 }}
               />
 
