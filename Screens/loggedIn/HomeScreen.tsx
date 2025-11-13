@@ -594,7 +594,7 @@ export default function MotorPage() {
       <View style={[styles.fixedHeader, isDarkMode && { backgroundColor: "#1A1A1A" }]}>
         <LinearGradient colors={isDarkMode ? ["#00858B", "#006A6F"] : ["#00ADB5", "#00C2CC"]} style={styles.headerGradient}>
           <Image
-            source={!isDarkMode ? require("../../assets/logo_trafficSlight_dark.png") : require("../../assets/logo_trafficSlight.png")}
+            source={isDarkMode ? require("../../assets/logo_trafficSlight_dark.png") : require("../../assets/logo_trafficSlight.png")}
             style={styles.logoImage}
           />
         </LinearGradient>

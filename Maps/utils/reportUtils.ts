@@ -52,7 +52,14 @@ export const checkReportUpdates = async (params: CheckReportUpdatesParams): Prom
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     
-    const response = await fetch(`${API_BASE}/api/reports`, {
+    // Build query parameters for report filtering
+    const queryParams = new URLSearchParams();
+    // Don't include archived or invalid reports by default
+    // Add filters if needed in the future
+    
+    const url = `${API_BASE}/api/reports${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

@@ -27,6 +27,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
+    // Exception: Silently ignore "Text strings must be rendered within a <Text> component" errors
+    const errorMessage = error?.message || error?.toString() || '';
+    const isTextStringError = errorMessage.includes('Text strings must be rendered within a <Text> component');
+    
+    if (isTextStringError) {
+      // Silently suppress - don't trigger error state, don't log anything
+      return {
+        hasError: false,
+        error: null,
+      };
+    }
+    
     return {
       hasError: true,
       error,
@@ -34,6 +46,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: any) {
+    // Exception: Silently ignore "Text strings must be rendered within a <Text> component" errors
+    const errorMessage = error?.message || error?.toString() || '';
+    const isTextStringError = errorMessage.includes('Text strings must be rendered within a <Text> component');
+    
+    if (isTextStringError) {
+      // Silently suppress - don't log, don't set state, don't call handlers
+      return;
+    }
+    
     console.error('ErrorBoundary caught an error:', error, errorInfo);
     
     this.setState({

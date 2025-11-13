@@ -6,6 +6,7 @@ import { calculateDistance, checkGPSServiceStatus, GPSServiceStatus } from '../u
 import { updateFuelLevel } from '../utils/api';
 import { snapToRoads, snapSinglePoint } from '../utils/roadSnapping';
 import { calculateNewFuelLevel, calculateFuelLevelAfterRefuel } from '../utils/fuelCalculations';
+import { updateTripDistanceWithRetry, type TripDistanceUpdateResponse } from '../Maps/utils/tripDistanceUpdate';
 import type { RideStats, LocationCoords, Motor } from '../types';
 
 interface UseTrackingProps {
@@ -22,9 +23,11 @@ interface UseTrackingReturn {
   startTracking: () => Promise<void>;
   stopTracking: () => void;
   resetTracking: () => void;
+  totalDistanceTraveled: number;
+  lastPostedDistance: number;
 }
 
-export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: UseTrackingProps): UseTrackingReturn => {
+export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed, onFuelLevelUpdate }: UseTrackingProps): UseTrackingReturn => {
   const [isTracking, setIsTracking] = useState(false);
   const [rideStats, setRideStats] = useState<RideStats>({
     duration: 0,
@@ -43,6 +46,12 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
   const statsTimer = useRef<NodeJS.Timeout | null>(null);
   const snapBatchRef = useRef<LocationCoords[]>([]);
   const snapTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Refs for trip distance API tracking
+  const totalDistanceTraveledRef = useRef<number>(0); // Cumulative distance since trip start
+  const lastPostedDistanceRef = useRef<number>(0); // Last successfully posted distance
+  const tripDistanceUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isPausedRef = useRef<boolean>(false);
 
   // FIXED: Clear route coordinates on reset to prevent memory leaks
   const resetTracking = useCallback(() => {
@@ -52,6 +61,15 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
       statsTimer.current = null;
       if (__DEV__) {
         console.log('[useTracking] Stats timer cleared in resetTracking');
+      }
+    }
+    
+    // Clear trip distance update interval
+    if (tripDistanceUpdateIntervalRef.current) {
+      clearInterval(tripDistanceUpdateIntervalRef.current);
+      tripDistanceUpdateIntervalRef.current = null;
+      if (__DEV__) {
+        console.log('[useTracking] Trip distance update interval cleared');
       }
     }
     
@@ -68,6 +86,11 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
     lastSnappedLocationRef.current = null;
     trackingStartTimeRef.current = null;
     snapBatchRef.current = [];
+    
+    // Reset trip distance tracking
+    totalDistanceTraveledRef.current = 0;
+    lastPostedDistanceRef.current = 0;
+    isPausedRef.current = false;
     
     // Clear snap timer
     if (snapTimerRef.current) {
@@ -265,6 +288,11 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
           setRideStats(prev => {
             const newDistance = prev.distance + distanceDeltaKm;
 
+            // Update total distance traveled for API (only if not paused)
+            if (!isPausedRef.current) {
+              totalDistanceTraveledRef.current = newDistance;
+            }
+
             const elapsedSeconds = trackingStartTimeRef.current 
               ? Math.floor((Date.now() - trackingStartTimeRef.current) / 1000) 
               : prev.duration;
@@ -278,8 +306,8 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
               avgSpeed,
             };
 
-        // Note: Fuel level calculation is handled in the parent component (RouteSelectionScreenOptimized)
-        // to avoid double fuel consumption. The parent component receives stats updates via onStatsUpdate callback.
+        // Note: Fuel level calculation is handled via /api/trip/update-distance endpoint
+        // which is called periodically every 5 seconds. The parent component receives stats updates via onStatsUpdate callback.
 
             return newStats;
           });
@@ -287,11 +315,115 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
       );
 
       setIsTracking(true);
+      
+      // Start periodic trip distance updates (every 5 seconds)
+      if (selectedMotor?._id) {
+        startTripDistanceUpdates(selectedMotor._id);
+      }
     } catch (error) {
       console.error('Failed to start tracking:', error);
       throw error;
     }
   }, [selectedMotor, resetTracking]);
+  
+  /**
+   * Start periodic trip distance updates to API
+   * Calls /api/trip/update-distance every 5 seconds
+   */
+  const startTripDistanceUpdates = useCallback((userMotorId: string) => {
+    // Clear any existing interval
+    if (tripDistanceUpdateIntervalRef.current) {
+      clearInterval(tripDistanceUpdateIntervalRef.current);
+    }
+    
+    // Reset distance tracking when starting
+    totalDistanceTraveledRef.current = 0;
+    lastPostedDistanceRef.current = 0;
+    isPausedRef.current = false;
+    
+    if (__DEV__) {
+      console.log('[useTracking] Starting periodic trip distance updates', {
+        userMotorId,
+        interval: '5 seconds',
+      });
+    }
+    
+    // Call API every 5 seconds
+    tripDistanceUpdateIntervalRef.current = setInterval(async () => {
+      // Skip if paused
+      if (isPausedRef.current) {
+        if (__DEV__) {
+          console.log('[useTracking] Skipping trip distance update (paused)');
+        }
+        return;
+      }
+      
+      const totalDistance = totalDistanceTraveledRef.current;
+      const lastPosted = lastPostedDistanceRef.current;
+      
+      // Only call API if there's new distance to report
+      if (totalDistance <= lastPosted) {
+        if (__DEV__) {
+          console.log('[useTracking] No new distance to report', {
+            totalDistance,
+            lastPosted,
+          });
+        }
+        return;
+      }
+      
+      try {
+        if (__DEV__) {
+          console.log('[useTracking] Calling trip distance update API', {
+            userMotorId,
+            totalDistanceTraveled: totalDistance,
+            lastPostedDistance: lastPosted,
+          });
+        }
+        
+        const response = await updateTripDistanceWithRetry(
+          userMotorId,
+          totalDistance,
+          lastPosted
+        );
+        
+        // Handle skipped updates (not an error)
+        if (response === null) {
+          if (__DEV__) {
+            console.log('[useTracking] Trip distance update skipped (distance too small)');
+          }
+          return;
+        }
+        
+        // Update last posted distance on success
+        if (response.success && response.newFuelLevel !== undefined) {
+          lastPostedDistanceRef.current = totalDistance;
+          
+          if (__DEV__) {
+            console.log('[useTracking] ✅ Trip distance updated successfully', {
+              actualDistanceTraveled: response.actualDistanceTraveled,
+              newFuelLevel: response.newFuelLevel,
+              lowFuelWarning: response.lowFuelWarning,
+            });
+          }
+          
+          // Notify parent component about fuel level update
+          if (onFuelLevelUpdate && response.newFuelLevel !== undefined) {
+            onFuelLevelUpdate(
+              response.newFuelLevel,
+              response.lowFuelWarning || false
+            );
+          }
+        }
+      } catch (error: any) {
+        // Log error but don't stop the interval
+        // The retry logic in updateTripDistanceWithRetry handles transient errors
+        console.warn('[useTracking] ❌ Failed to update trip distance:', error.message);
+        
+        // Don't update lastPostedDistanceRef on error - will retry on next interval
+      }
+    }, 5000); // 5 seconds as per API documentation
+  }, [onFuelLevelUpdate]);
 
   const stopTracking = useCallback(() => {
     console.log('[useTracking] Starting stop tracking process...');
@@ -299,6 +431,17 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
     try {
       // First, set tracking to false to prevent new location updates
       setIsTracking(false);
+      
+      // Clear trip distance update interval
+      try {
+        if (tripDistanceUpdateIntervalRef.current) {
+          clearInterval(tripDistanceUpdateIntervalRef.current);
+          tripDistanceUpdateIntervalRef.current = null;
+          console.log('[useTracking] Trip distance update interval cleared');
+        }
+      } catch (error) {
+        console.warn('[useTracking] Error clearing trip distance update interval:', error);
+      }
 
       // Clear timers and subscriptions with individual error handling
       try {
@@ -359,6 +502,7 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
   useEffect(() => {
     return () => {
       if (statsTimer.current) clearInterval(statsTimer.current);
+      if (tripDistanceUpdateIntervalRef.current) clearInterval(tripDistanceUpdateIntervalRef.current);
       if (trackingLocationSub.current) trackingLocationSub.current.remove();
       if (snapTimerRef.current) clearTimeout(snapTimerRef.current);
     };
@@ -393,5 +537,7 @@ export const useTracking = ({ selectedMotor, onStatsUpdate, onSnappingFailed }: 
     startTracking,
     stopTracking,
     resetTracking,
+    totalDistanceTraveled: totalDistanceTraveledRef.current,
+    lastPostedDistance: lastPostedDistanceRef.current,
   };
 };

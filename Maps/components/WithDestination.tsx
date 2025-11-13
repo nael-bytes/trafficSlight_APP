@@ -45,11 +45,7 @@ import { canReachDestination, calculateDistancePossible } from '../utils/fuelCal
 import { PredictiveAnalytics } from './PredictiveAnalytics';
 import { distanceToPolyline, haversineDistance, coordinatesToPolyline } from '../utils/geo';
 import { RouteSelectionModal } from '../../components/RouteSelectionModal-mapscreentry';
-import { getAuthToken } from '../../utils/api';
-import { LOCALHOST_IP } from '@env';
-
-// API Base URL
-const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+// REMOVED: Separate fuel polling API - now uses fuel level from selectedMotor (updated by tracking hook)
 
 // Fuel level data interface
 interface FuelLevelData {
@@ -198,11 +194,26 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
   const [canReachDestinationState, setCanReachDestinationState] = useState(true);
   const [fuelWarning, setFuelWarning] = useState<string | null>(null);
   
-  // Fuel level state
-  const [fuelLevelData, setFuelLevelData] = useState<FuelLevelData | null>(null);
-  const [fuelLevelLoading, setFuelLevelLoading] = useState(false);
-  const [fuelLevelError, setFuelLevelError] = useState<string | null>(null);
-  const fuelLevelIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Fuel level state - Now derived from selectedMotor (updated by tracking hook via API)
+  // No need for separate polling since tracking hook updates fuel every 5 seconds via /api/trip/update-distance
+  // The tracking hook calls /api/trip/update-distance and updates selectedMotor.currentFuelLevel via parent
+  const fuelLevelData: FuelLevelData | null = React.useMemo(() => {
+    if (!selectedMotor) return null;
+    
+    const percentage = selectedMotor.currentFuelLevel ?? 0;
+    const fuelTank = selectedMotor.fuelTank || 0;
+    const fuelEfficiency = selectedMotor.fuelEfficiency || selectedMotor.fuelConsumption || 0;
+    
+    return {
+      percentage,
+      liters: fuelTank > 0 ? (percentage / 100) * fuelTank : 0,
+      fuelTankCapacity: fuelTank,
+      drivableDistance: fuelEfficiency > 0 && fuelTank > 0 && percentage > 0
+        ? (fuelEfficiency * fuelTank * (percentage / 100))
+        : 0,
+      isLowFuel: percentage <= 10,
+    };
+  }, [selectedMotor?.currentFuelLevel, selectedMotor?.fuelTank, selectedMotor?.fuelEfficiency, selectedMotor?.fuelConsumption]);
   
   // Auto-show route selection modal when routes are found (unless manually closed)
   useEffect(() => {
@@ -444,13 +455,7 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
       setOffRouteCount(0);
       setRerouting(false);
       
-      // Clear fuel level data when navigation stops
-      if (fuelLevelIntervalRef.current) {
-        clearInterval(fuelLevelIntervalRef.current);
-        fuelLevelIntervalRef.current = null;
-      }
-      setFuelLevelData(null);
-      setFuelLevelError(null);
+      // Fuel level data is now derived from selectedMotor, no cleanup needed
       
       // Reset modals to ensure clean state for next trip
       setShowConfirmationModal(false);
@@ -461,90 +466,10 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
   }, [isNavigating]);
 
   /**
-   * Fetch fuel level from API
+   * Fuel level is now updated automatically by the tracking hook via /api/trip/update-distance
+   * The tracking hook calls the API every 5 seconds and updates selectedMotor.currentFuelLevel
+   * No need for separate polling - fuel level is derived from selectedMotor prop
    */
-  const fetchFuelLevel = useCallback(async () => {
-    if (!selectedMotor?._id) {
-      setFuelLevelData(null);
-      return;
-    }
-
-    try {
-      setFuelLevelLoading(true);
-      setFuelLevelError(null);
-
-      const token = await getAuthToken();
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-      
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${API_BASE}/api/user-motors/${selectedMotor._id}/fuel`, {
-        method: 'GET',
-        headers,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: 'Failed to fetch fuel level' }));
-        throw new Error(errorData.message || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.success && data.fuelLevel) {
-        setFuelLevelData({
-          percentage: data.fuelLevel.percentage || 0,
-          liters: data.fuelLevel.liters || 0,
-          fuelTankCapacity: data.fuelLevel.fuelTankCapacity || 0,
-          drivableDistance: data.drivableDistance?.withCurrentFuel || 0,
-          isLowFuel: data.alerts?.isLowFuel || false,
-        });
-        setFuelLevelError(null);
-      } else {
-        throw new Error('Invalid response format');
-      }
-    } catch (error: any) {
-      console.error('[WithDestination] ❌ Error fetching fuel level:', error);
-      setFuelLevelError(error.message || 'Failed to fetch fuel level');
-      setFuelLevelData(null);
-    } finally {
-      setFuelLevelLoading(false);
-    }
-  }, [selectedMotor?._id]);
-
-  /**
-   * Poll fuel level when navigating
-   */
-  useEffect(() => {
-    if (isNavigating && selectedMotor?._id) {
-      // Fetch immediately
-      fetchFuelLevel();
-      
-      // Set up polling every 60 seconds
-      fuelLevelIntervalRef.current = setInterval(() => {
-        fetchFuelLevel();
-      }, 60000); // 60 seconds
-
-      return () => {
-        if (fuelLevelIntervalRef.current) {
-          clearInterval(fuelLevelIntervalRef.current);
-          fuelLevelIntervalRef.current = null;
-        }
-      };
-    } else {
-      // Clear interval when not navigating
-      if (fuelLevelIntervalRef.current) {
-        clearInterval(fuelLevelIntervalRef.current);
-        fuelLevelIntervalRef.current = null;
-      }
-      // Clear fuel level data when navigation stops
-      setFuelLevelData(null);
-      setFuelLevelError(null);
-    }
-  }, [isNavigating, selectedMotor?._id, fetchFuelLevel]);
 
   /**
    * Handle navigation start with confirmation
@@ -876,11 +801,7 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
                 size={20} 
                 color={fuelLevelData?.isLowFuel ? "#FF9800" : "#FFF"} 
               />
-              {fuelLevelLoading ? (
-                <ActivityIndicator size="small" color="#FFF" style={{ marginVertical: 5 }} />
-              ) : fuelLevelError ? (
-                <Text style={[styles.statValue, styles.errorText]}>--</Text>
-              ) : fuelLevelData ? (
+              {fuelLevelData ? (
                 <>
                   <Text style={[
                     styles.statValue,

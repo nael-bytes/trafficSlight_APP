@@ -34,6 +34,18 @@ export const forceRefreshMotors = async (userId: string) => {
 interface UseAppDataProps {
   user: User | null;
   isTracking?: boolean;
+  mapRegion?: {
+    latitude: number;
+    longitude: number;
+    latitudeDelta: number;
+    longitudeDelta: number;
+  };
+  reportFilters?: {
+    types?: string[];
+    status?: string[];
+  };
+  includeArchived?: boolean;
+  includeInvalid?: boolean;
 }
 
 interface UseAppDataReturn {
@@ -47,7 +59,14 @@ interface UseAppDataReturn {
   retryFailedRequests: () => Promise<void>;
 }
 
-export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAppDataReturn => {
+export const useAppData = ({ 
+  user, 
+  isTracking = false,
+  mapRegion,
+  reportFilters,
+  includeArchived = false,
+  includeInvalid = false,
+}: UseAppDataProps): UseAppDataReturn => {
   const [reports, setReports] = useState<TrafficReport[]>([]);
   const [gasStations, setGasStations] = useState<GasStation[]>([]);
   const [motors, setMotors] = useState<Motor[]>([]);
@@ -212,9 +231,34 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
 
     try {
 
+      // Build viewport from map region if available
+      let viewport: { north: number; south: number; east: number; west: number } | undefined;
+      if (mapRegion) {
+        viewport = {
+          north: mapRegion.latitude + mapRegion.latitudeDelta / 2,
+          south: mapRegion.latitude - mapRegion.latitudeDelta / 2,
+          east: mapRegion.longitude + mapRegion.longitudeDelta / 2,
+          west: mapRegion.longitude - mapRegion.longitudeDelta / 2,
+        };
+      }
+
+      // Build filters object
+      const filters = reportFilters && (reportFilters.types || reportFilters.status)
+        ? {
+            types: reportFilters.types,
+            status: reportFilters.status,
+          }
+        : undefined;
+
       // Fetch all data in parallel from API
       const [reportsResult, gasStationsResult, motorsResult] = await Promise.allSettled([
-        fetchReports(signal),
+        fetchReports({
+          signal,
+          includeArchived,
+          includeInvalid,
+          filters,
+          viewport,
+        }),
         fetchGasStations(signal),
         fetchUserMotors(userId, signal),
       ]);
@@ -416,9 +460,20 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
         }
       }
     }
-  }, [saveToCache, updateCachedReports, updateCachedGasStations, updateCachedMotors, isNetworkError, checkOfflineStatus, loadCachedData]);
+  }, [mapRegion, reportFilters, includeArchived, includeInvalid, saveToCache, updateCachedReports, updateCachedGasStations, updateCachedMotors, isNetworkError, checkOfflineStatus, loadCachedData]);
 
-  const refreshData = useCallback(async () => {
+  const refreshData = useCallback(async (refreshOptions?: {
+    mapRegion?: {
+      latitude: number;
+      longitude: number;
+      latitudeDelta: number;
+      longitudeDelta: number;
+    };
+    reportFilters?: {
+      types?: string[];
+      status?: string[];
+    };
+  }) => {
     if (!user?._id) return;
     
     // Cancel any ongoing request
@@ -429,8 +484,8 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
     // Create new abort controller
     abortControllerRef.current = new AbortController();
 
-    await fetchData(user._id, abortControllerRef.current.signal);
-  }, [user?._id, fetchData]);
+    await fetchData(user._id, abortControllerRef.current.signal, refreshOptions);
+  }, [user?._id, fetchData, mapRegion, reportFilters]);
 
   // Retry failed requests function
   const retryFailedRequests = useCallback(async () => {
@@ -451,9 +506,12 @@ export const useAppData = ({ user, isTracking = false }: UseAppDataProps): UseAp
     // Create new abort controller
     abortControllerRef.current = new AbortController();
 
-    // Retry the data fetch
-    await fetchData(user._id, abortControllerRef.current.signal);
-  }, [user?._id, fetchData, failedRequests]);
+    // Retry the data fetch with current map region and filters
+    await fetchData(user._id, abortControllerRef.current.signal, {
+      mapRegion,
+      reportFilters,
+    });
+  }, [user?._id, fetchData, failedRequests, mapRegion, reportFilters]);
 
   // Initial load - use GLOBAL Map to survive unmount/remount
   useEffect(() => {

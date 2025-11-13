@@ -20,6 +20,7 @@ import type { RouteProp } from '@react-navigation/native';
 import { useUser } from '../../AuthContext/UserContextImproved';
 import { LOCALHOST_IP } from '@env';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { apiRequest } from '../../utils/api';
 
 type MaintenanceAction = {
   _id: string;
@@ -377,6 +378,15 @@ export default function MaintenanceDetails() {
           </View>
         )}
 
+        {action.details?.costPerLiter !== undefined && action.type === 'refuel' && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="attach-money" size={20} color="#00ADB5" />
+            <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+              Price per Liter: ₱{Number(action.details.costPerLiter).toFixed(2)}
+            </Text>
+          </View>
+        )}
+
         {action.location && (
           <View style={styles.detailRow}>
             <MaterialIcons name="location-on" size={20} color="#00ADB5" />
@@ -433,47 +443,32 @@ export default function MaintenanceDetails() {
 
       try {
         setLoading(true);
-        const url = `https://ts-backend-1-jyit.onrender.com/api/maintenance-records/user/${user._id}`;
-        console.log("🔍 Attempting to fetch from URL:", url);
+        console.log("🔍 Fetching maintenance records for user:", user._id);
         
-        const response = await fetch(url).catch(networkError => {
-          console.error("🌐 Network Error Details:", {
-            name: networkError.name,
-            message: networkError.message,
-            cause: networkError.cause
-          });
-          throw networkError;
-        });
-
-        if (!response) {
-          throw new Error("No response received from server");
-        }
-
-        console.log("🔍 Response status:", response.status);
+        // Use apiRequest utility for consistent authentication and error handling
+        const maintenanceData = await apiRequest(`/api/maintenance-records/user/${user._id}`);
         
-        const responseText = await response.text();
-        console.log("🔍 Raw response:", responseText);
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status} - ${responseText}`);
+        // Handle different response formats (array, wrapped in object, etc.)
+        let data: MaintenanceAction[] = [];
+        if (Array.isArray(maintenanceData)) {
+          data = maintenanceData;
+        } else if (maintenanceData?.maintenanceRecords) {
+          data = Array.isArray(maintenanceData.maintenanceRecords) ? maintenanceData.maintenanceRecords : [];
+        } else if (maintenanceData?.data) {
+          data = Array.isArray(maintenanceData.data) ? maintenanceData.data : [];
         }
-
-        const data = responseText ? JSON.parse(responseText) : [];
+        
         console.log("✅ Parsed maintenance data:", JSON.stringify(data, null, 2));
-        
-        // Verify data structure
-        if (Array.isArray(data)) {
-          console.log("✅ Data is an array with length:", data.length);
-          console.log("✅ First item sample:", data[0] ? JSON.stringify(data[0], null, 2) : "No items");
-        } else {
-          console.log("❌ Data is not an array:", typeof data);
+        console.log("✅ Data is an array with length:", data.length);
+        if (data.length > 0) {
+          console.log("✅ First item sample:", JSON.stringify(data[0], null, 2));
         }
 
         const stats = calculateStats(data);
         console.log("📊 Calculated stats from fetched data:", stats);
         
         // Extract unique motors for filter dropdown
-        const motors = [...new Set(data.map(item => item.motorId._id))] as string[];
+        const motors = [...new Set(data.map(item => item.motorId?._id).filter(Boolean))] as string[];
         setAvailableMotors(motors);
         
         setFetchedList(data);

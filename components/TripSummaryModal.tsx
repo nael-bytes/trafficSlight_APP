@@ -8,10 +8,15 @@ import {
   Modal,
   StyleSheet,
   ScrollView,
+  Dimensions,
+  Platform,
+  SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type { RideStats } from '../types';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface TripSummaryModalProps {
   visible: boolean;
@@ -229,8 +234,9 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
       visible={visible}
       onRequestClose={onClose}
     >
-      <View style={[styles.summaryModalContainer, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-        <View style={[styles.summaryModal, { margin: 10 }]}>
+      <SafeAreaView style={styles.summaryModalContainer}>
+        <View style={styles.modalOverlay} />
+        <View style={styles.summaryModal}>
           <LinearGradient
             colors={['#00ADB5', '#00858B']}
             start={{ x: 0, y: 0 }}
@@ -240,7 +246,11 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
             <Text style={[styles.summaryTitle, { color: '#fff' }]}>Trip Summary & Analytics</Text>
           </LinearGradient>
 
-          <ScrollView style={styles.summaryContent}>
+          <ScrollView 
+            style={styles.summaryContent}
+            contentContainerStyle={styles.summaryContentContainer}
+            showsVerticalScrollIndicator={true}
+          >
             {/* Trip Overview */}
             <View style={styles.summarySection}>
               <Text style={styles.sectionTitle}>Trip Overview</Text>
@@ -341,7 +351,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
             </View>
 
             {/* Routing Information */}
-            {(tripData?.wasRerouted || tripData?.rerouteCount) && (
+            {!!(tripData?.wasRerouted || tripData?.rerouteCount) && (
               <View style={styles.summarySection}>
                 <Text style={styles.sectionTitle}>Routing Information</Text>
 
@@ -354,7 +364,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                     </Text>
                     <Text style={styles.analyticsLabel}>Reroute Count:</Text>
                     <Text style={styles.analyticsValue}>
-                      {String(tripData?.rerouteCount != null && !isNaN(Number(tripData.rerouteCount)) ? tripData.rerouteCount : 0)}
+                      {String(tripData?.rerouteCount != null && !isNaN(Number(tripData.rerouteCount)) ? Number(tripData.rerouteCount) : 0)}
                     </Text>
                   </View>
                 </View>
@@ -418,6 +428,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                   const actionType = action?.type || 'unknown';
                   const actionCost = action?.cost != null && !isNaN(Number(action.cost)) ? Number(action.cost) : null;
                   const actionQuantity = action?.quantity != null && !isNaN(Number(action.quantity)) ? Number(action.quantity) : null;
+                  const actionCostPerLiter = action?.costPerLiter != null && !isNaN(Number(action.costPerLiter)) ? Number(action.costPerLiter) : null;
                   const actionNotes = action?.notes ? String(action.notes) : null;
                   
                   // Safely format type
@@ -428,8 +439,9 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                   // Build maintenance info string safely
                   const costText = actionCost != null ? `₱${actionCost.toFixed(2)}` : '--';
                   const quantityText = actionQuantity != null ? ` • Quantity: ${actionQuantity.toFixed(2)}L` : '';
+                  const costPerLiterText = actionCostPerLiter != null && actionType === 'refuel' ? ` • Price: ₱${actionCostPerLiter.toFixed(2)}/L` : '';
                   const notesText = actionNotes ? ` • Notes: ${actionNotes}` : '';
-                  const maintenanceInfoText = `Cost: ${costText}${quantityText}${notesText}`;
+                  const maintenanceInfoText = `Cost: ${costText}${quantityText}${costPerLiterText}${notesText}`;
                   
                   return (
                     <View key={index} style={styles.maintenanceRow}>
@@ -485,7 +497,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
             )}
           </View>
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }, areTripSummaryPropsEqual);
@@ -494,23 +506,37 @@ const styles = StyleSheet.create({
   // Summary Modal Styles
   summaryModalContainer: {
     flex: 1,
-    bottom: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   summaryModal: {
     backgroundColor: '#fff',
-    borderRadius: 20,
-    width: '90%',
-    maxHeight: '80%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    width: '100%',
+    maxHeight: SCREEN_HEIGHT * 0.92,
+    minHeight: SCREEN_HEIGHT * 0.6,
+    flexDirection: 'column',
     elevation: 5,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
+    ...Platform.select({
+      ios: {
+        shadowOffset: { width: 0, height: -2 },
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
   },
   summaryHeaderGradient: {
     padding: 16,
+    paddingTop: Platform.OS === 'ios' ? 20 : 16,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     alignItems: 'center',
@@ -521,7 +547,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   summaryContent: {
+    flex: 1,
+  },
+  summaryContentContainer: {
     padding: 16,
+    paddingBottom: 8,
   },
   summarySection: {
     marginBottom: 20,
@@ -566,8 +596,13 @@ const styles = StyleSheet.create({
 
   buttonContainer: {
     flexDirection: 'row',
-    margin: 16,
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 16,
+    paddingTop: 12,
     gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.1)',
+    backgroundColor: '#fff',
   },
   closeSummaryButton: {
     flex: 1,

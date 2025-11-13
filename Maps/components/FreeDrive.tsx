@@ -40,7 +40,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, StyleSheet, Text, TouchableOpacity, Alert, Dimensions, Platform } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type { Motor, LocationCoords, RideStats } from '../../types';
-import { calculateFuelAfterDistance } from '../utils/fuelCalculation';
+// REMOVED: calculateFuelAfterDistance - fuel updates now handled by tracking hook via /api/trip/update-distance
 import { Speedometer } from '../../components/Speedometer';
 // REMOVED: TrackingStats - now rendered in RouteSelectionScreenOptimized.tsx for better visibility
 
@@ -81,7 +81,7 @@ interface FreeDriveProps {
   onPauseTracking?: () => void;
   onResumeTracking?: () => void;
   onStatsUpdate: (stats: RideStats) => void;
-  onFuelUpdate: (newFuelLevel: number) => void;
+  onFuelUpdate?: (newFuelLevel: number) => void; // Optional - fuel now updated by tracking hook via API
   onMaintenanceAction: (actionType: 'refuel' | 'oil_change' | 'tune_up') => void;
   onSelectMotor: (motor: Motor) => void;
   onShowMotorSelector: () => void;
@@ -122,7 +122,7 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
   onPauseTracking,
   onResumeTracking,
   onStatsUpdate,
-  onFuelUpdate,
+  onFuelUpdate, // Optional - kept for backward compatibility
   onMaintenanceAction,
   onSelectMotor,
   onShowMotorSelector,
@@ -143,43 +143,20 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
   /**
    * Handle stats update - DELEGATES TO PARENT
    * 
-   * NOTE: This component calculates fuel consumption for display purposes only.
-   * The parent component (RouteSelectionScreenOptimized) handles:
-   * - Backend updates for fuel level
-   * - Motor state updates
-   * - Analytics calculations
-   * 
-   * This is a presentation layer calculation for real-time UI updates.
+   * NOTE: Fuel level updates are now handled automatically by the tracking hook via /api/trip/update-distance
+   * The tracking hook calls the API every 5 seconds and updates selectedMotor.currentFuelLevel via parent
+   * This component only needs to notify parent of stats updates - fuel is handled by API integration
    * 
    * @param {RideStats} stats - Current ride statistics
    */
-  const handleStatsUpdate = useCallback(async (stats: RideStats) => {
-    if (stats.distance > 0 && selectedMotor) {
-      // Calculate incremental distance (new distance since last update)
-      const incrementalDistance = stats.distance - lastProcessedDistanceRef.current;
-
-      // Only process fuel if there's significant new distance (at least 0.01km)
-      if (incrementalDistance > 0.01) {
-        try {
-          // Calculate new fuel level using utility function (for UI display only)
-          const newFuelLevel = await calculateFuelAfterDistance(selectedMotor, incrementalDistance);
-          
-          // Notify parent of fuel level change (parent handles backend update)
-          onFuelUpdate(newFuelLevel);
-          
-          // Notify parent of stats update (parent handles analytics and backend)
-          onStatsUpdate(stats);
-        } catch (error) {
-          if (__DEV__) {
-            console.error('[FreeDrive] Error calculating fuel after distance:', error);
-          }
-        }
-      }
-
-      // Update the last processed distance
-      lastProcessedDistanceRef.current = stats.distance;
-    }
-  }, [selectedMotor, onFuelUpdate, onStatsUpdate]);
+  const handleStatsUpdate = useCallback((stats: RideStats) => {
+    // Update the last processed distance for reference
+    lastProcessedDistanceRef.current = stats.distance;
+    
+    // Notify parent of stats update (parent handles analytics and backend)
+    // Fuel level is automatically updated by tracking hook via /api/trip/update-distance
+    onStatsUpdate(stats);
+  }, [onStatsUpdate]);
 
   // Reset distance tracking when tracking starts
   useEffect(() => {
@@ -514,9 +491,9 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   smallButton: {
-    width: width * 0.10,
-    height: width * 0.10,
-    borderRadius: width * 0.055,
+    width: 40,
+    height: 40,
+    borderRadius: 40,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',

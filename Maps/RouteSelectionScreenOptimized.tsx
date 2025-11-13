@@ -83,6 +83,7 @@ import { WithDestination } from './components/WithDestination';
 import { Reporting } from './components/Reporting';
 import { FuelCheckModal } from './components/FuelCheckModal';
 import { FuelUpdateModal } from './components/FuelUpdateModal';
+import { FuelUpdateSimulatorPanel } from './components/FuelUpdateSimulatorPanel';
 // REMOVED: PredictiveAnalytics - now included in WithDestination component
 // REMOVED: ToggleButtons - not used in this file
 // REMOVED: MapMarkers - not used in this file (markers are handled by OptimizedMapComponent)
@@ -200,20 +201,18 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
   // Map pitch state for free drive mode (camera tilt)
   const [mapPitch, setMapPitch] = useState(0); // 0 = flat, 45 = tilted for driving mode
 
-  // App data hook - provides reports, gasStations, motors from API
+  // MapScreenTryRefactored hooks - MUST be called before useAppData to ensure mapState is initialized
+  const mapStateResult = useMapState();
+  
+  // CRITICAL: Ensure mapState is always defined to prevent "Cannot read property 'region' of undefined" errors
+  // Provide default values if mapState is undefined (should never happen, but safety check)
   const {
-    reports: appReports,
-    gasStations: appGasStations,
-    motors: appMotors,
-    error: appDataError,
-  } = useAppData({
-    user,
-    isTracking: false,
-  });
-
-  // MapScreenTryRefactored hooks
-  const {
-    mapState,
+    mapState = {
+      currentLocation: null,
+      destination: null,
+      region: null,
+      isFollowingUser: false,
+    },
     navigationState,
     uiState,
     mapRef,
@@ -231,7 +230,35 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
     setIsOverSpeedLimit,
     setNavigationStartTime,
     updateUiState,
-  } = useMapState();
+  } = mapStateResult || {};
+
+  // App data hook - provides reports, gasStations, motors from API
+  // Pass map region for viewport filtering to optimize performance
+  // CRITICAL: mapState must be initialized before this hook (moved after useMapState)
+  const {
+    reports: appReports,
+    gasStations: appGasStations,
+    motors: appMotors,
+    error: appDataError,
+    refreshData: refreshAppData,
+  } = useAppData({
+    user,
+    isTracking: false,
+    mapRegion: mapState?.region || null, // Safely access region (may be null initially)
+    reportFilters: mapFilters ? {
+      // Map mapFilters to API filter format
+      types: (() => {
+        const types: string[] = [];
+        if (mapFilters.showAccidents) types.push('Accident');
+        if (mapFilters.showCongestion) types.push('Traffic Jam');
+        if (mapFilters.showRoadwork) types.push('Road Closure');
+        if (mapFilters.showHazards) types.push('Hazard');
+        return types.length > 0 ? types : undefined;
+      })(),
+    } : undefined,
+    includeArchived: false, // Don't include archived reports by default
+    includeInvalid: false, // Don't include invalid reports by default
+  });
 
   const {
     selectedRouteId,
@@ -373,6 +400,33 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
     selectedMotor,
     onStatsUpdate: handleStatsUpdate,
     onSnappingFailed: handleSnappingFailed,
+    onFuelLevelUpdate: (newFuelLevel: number, lowFuelWarning: boolean) => {
+      // Update motor fuel level from API response
+      if (selectedMotor) {
+        setSelectedMotor({
+          ...selectedMotor,
+          currentFuelLevel: newFuelLevel,
+        });
+        
+        if (__DEV__) {
+          console.log('[RouteSelection] ✅ Fuel level updated from API', {
+            newFuelLevel,
+            lowFuelWarning,
+            motorId: selectedMotor._id,
+          });
+        }
+        
+        // Show low fuel warning if needed
+        if (lowFuelWarning) {
+          Toast.show({
+            type: 'warning',
+            text1: 'Low Fuel Warning',
+            text2: `Fuel level is at ${newFuelLevel.toFixed(1)}%. Please refuel soon.`,
+            visibilityTime: 5000,
+          });
+        }
+      }
+    },
   });
   
   // Safely destructure with defaults to prevent "Property 'isTracking' doesn't exist" error
@@ -957,6 +1011,9 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
   // Gas price update modal state
   const [showGasPriceUpdateModal, setShowGasPriceUpdateModal] = useState(false);
   const [selectedGasStationForPriceUpdate, setSelectedGasStationForPriceUpdate] = useState<any>(null);
+  
+  // Fuel update simulator (development only)
+  const [showFuelSimulator, setShowFuelSimulator] = useState(false);
 
   // sliderTrackRef is now provided by useFuelManagement hook
   const sliderTrackWidthRef = useRef<number>(280); // Default width, will be updated on layout
@@ -1020,15 +1077,61 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
     localMotors,
     cachedMotors,
     mapState: {
-      currentLocation: mapState.currentLocation,
-      destination: mapState.destination,
-      region: mapState.region,
+      currentLocation: mapState?.currentLocation ?? null,
+      destination: mapState?.destination ?? null,
+      region: mapState?.region ?? null,
     },
     selectedRoute,
     alternativeRoutes,
     showReports,
     showGasStations,
   });
+
+  // Check if markers are fully loaded when screen focuses and reload if needed
+  // This works for both logged in and not logged in users
+  useEffect(() => {
+    // Only check when screen is focused
+    if (!isFocused) return;
+
+    // Wait a bit for initial data to load
+    const checkTimeout = setTimeout(() => {
+      // Check if markers are not fully loaded
+      // Consider markers "not fully loaded" if:
+      // 1. Both reports and gas stations are empty (or very few)
+      // 2. Reports are empty but should have some
+      const reportsCount = effectiveReports?.length || 0;
+      const gasStationsCount = effectiveGasStations?.length || 0;
+      const totalMarkers = reportsCount + gasStationsCount;
+
+      // Threshold: If total markers is less than 5, consider it not fully loaded
+      // This accounts for areas with genuinely few markers
+      const MIN_EXPECTED_MARKERS = 5;
+      const isMarkersNotFullyLoaded = totalMarkers < MIN_EXPECTED_MARKERS;
+
+      if (isMarkersNotFullyLoaded && refreshAppData) {
+        if (__DEV__) {
+          console.log('[RouteSelection] ⚠️ Markers not fully loaded, reloading...', {
+            reportsCount,
+            gasStationsCount,
+            totalMarkers,
+            isLoggedIn: !!user?._id,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Reload markers (works for both logged in and not logged in)
+        refreshAppData().catch((error) => {
+          if (__DEV__) {
+            console.warn('[RouteSelection] Failed to reload markers:', error);
+          }
+        });
+      }
+    }, 2000); // Wait 2 seconds after focus to allow initial load
+
+    return () => {
+      clearTimeout(checkTimeout);
+    };
+  }, [isFocused, user?._id, effectiveReports?.length, effectiveGasStations?.length, refreshAppData]);
 
   // REMOVED: Effect to update map markers and polylines
   // The OptimizedMapComponent now receives props directly and handles updates internally via React.memo
@@ -1560,7 +1663,7 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
 
   // 3D navigation functionality has been removed
 
-  // Handle filter changes
+  // Handle filter changes - Force immediate update
   const handleFiltersChange = useCallback((newFilters: MapFilters) => {
     if (__DEV__) {
       console.log('[RouteSelection] 🔍 handleFiltersChange called', {
@@ -1569,11 +1672,20 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
       });
     }
 
+    // Update filters immediately
     setMapFilters(newFilters);
 
+    // Force a re-render by updating a key or triggering state change
+    // The OptimizedMapComponent will receive new mapFilters prop and re-render
+    // The filteredGasStationMarkers and filteredReportMarkers will recalculate
+    
     if (__DEV__) {
-      console.log('[RouteSelection] ✅ Map filters updated', {
+      console.log('[RouteSelection] ✅ Map filters updated, forcing marker refresh', {
         filters: newFilters,
+        showOtherGasStations: newFilters.showOtherGasStations,
+        showPetron: newFilters.showPetron,
+        showShell: newFilters.showShell,
+        showCaltex: newFilters.showCaltex,
         timestamp: new Date().toISOString(),
       });
     }
@@ -1961,6 +2073,32 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                 hideFloatingButtons={false} // Not needed since component is conditionally rendered
               />
               )}
+              
+              {/* Development: Fuel Simulator Button */}
+              {__DEV__ && !isDestinationFlowActive && (
+                <TouchableOpacity
+                  style={{
+                    position: 'absolute',
+                    top: 100,
+                    right: 16,
+                    backgroundColor: '#9C27B0',
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.25,
+                    shadowRadius: 3.84,
+                    elevation: 5,
+                    zIndex: 2000,
+                  }}
+                  onPress={() => setShowFuelSimulator(true)}
+                >
+                  <MaterialIcons name="science" size={24} color="#FFF" />
+                </TouchableOpacity>
+              )}
 
               {/* Reporting Component - Handles traffic reports and gas stations */}
               <Reporting
@@ -1993,13 +2131,15 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
 
               {/* Optimized Map Component - Handles map rendering and interactions */}
               {/* CRITICAL: Only update when screen is focused - prevents updates when switching tabs */}
+              {/* CRITICAL: Key prop forces re-render when filters change to apply filter changes immediately */}
               {isFocused && (
                 <OptimizedMapComponent
+                  key={`map-filters-${mapFilters?.showOtherGasStations}-${mapFilters?.showPetron}-${mapFilters?.showShell}-${mapFilters?.showCaltex}-${mapFilters?.showTrafficReports}`}
                   mapRef={mapRef}
-                  region={mapState.region}
+                  region={mapState?.region ?? null}
                   mapStyle="standard"
-                  currentLocation={mapState.currentLocation}
-                  destination={mapState.destination}
+                  currentLocation={mapState?.currentLocation ?? null}
+                  destination={mapState?.destination ?? null}
                   userId={user?._id}
                   reportMarkers={effectiveReports}
                   gasStations={effectiveGasStations}
@@ -2147,6 +2287,34 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                 onLowFuelContinue={() => handleLowFuelConfirmation(true)}
                 onCancel={() => setShowFuelCheckModalFromHook(false)}
               />
+
+              {/* Fuel Update Simulator Panel (Development Only) */}
+              {__DEV__ && (
+                <FuelUpdateSimulatorPanel
+                  visible={showFuelSimulator}
+                  onClose={() => setShowFuelSimulator(false)}
+                  selectedMotor={selectedMotor}
+                  currentLocation={mapState.currentLocation}
+                  onFuelUpdate={(newFuelLevel, lowFuelWarning) => {
+                    // Update motor fuel level from simulator
+                    if (selectedMotor) {
+                      setSelectedMotor({
+                        ...selectedMotor,
+                        currentFuelLevel: newFuelLevel,
+                      });
+                      
+                      if (lowFuelWarning) {
+                        Toast.show({
+                          type: 'warning',
+                          text1: 'Low Fuel Warning',
+                          text2: `Fuel level is at ${newFuelLevel.toFixed(1)}%. Please refuel soon.`,
+                          visibilityTime: 5000,
+                        });
+                      }
+                    }
+                  }}
+                />
+              )}
 
               {/* Gas Price Update Modal */}
               <GasPriceUpdateModal

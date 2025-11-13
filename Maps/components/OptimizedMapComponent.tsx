@@ -664,7 +664,7 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
   // CRITICAL: Start with true if icons are already preloaded (from app startup)
   const [iconsReady, setIconsReady] = useState(iconsPreloaded);
 
-  // Ensure icons are preloaded on mount
+  // Ensure icons are preloaded on mount and check if markers need reload
   useEffect(() => {
     if (!iconsReady) {
       ensureIconsPreloaded().then(() => {
@@ -677,6 +677,40 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
       console.log('[OptimizedMapComponent] ✅ Icons already preloaded');
     }
   }, [iconsReady]);
+
+  // Check if markers are showing default icons and reload if needed
+  // This ensures markers show proper icons on app start (logged in or not)
+  useEffect(() => {
+    if (!isFocused) return;
+
+    // Wait a bit for markers to render
+    const checkTimeout = setTimeout(() => {
+      // Check if we have markers but icons might not be loaded
+      const hasMarkers = (reportMarkers?.length || 0) > 0 || (gasStations?.length || 0) > 0;
+      
+      // If we have markers but icons aren't ready, ensure they're loaded
+      if (hasMarkers && !iconsReady) {
+        if (__DEV__) {
+          console.log('[OptimizedMapComponent] ⚠️ Markers present but icons not ready, ensuring icons are loaded');
+        }
+        // Force icon reload
+        ensureIconsPreloaded().then(() => {
+          setIconsReady(true);
+          if (__DEV__) {
+            console.log('[OptimizedMapComponent] ✅ Icons reloaded, markers should now show proper icons');
+          }
+        }).catch((error) => {
+          if (__DEV__) {
+            console.warn('[OptimizedMapComponent] Failed to reload icons:', error);
+          }
+        });
+      }
+    }, 1500); // Check after 1.5 seconds to allow initial render
+
+    return () => {
+      clearTimeout(checkTimeout);
+    };
+  }, [isFocused, iconsReady, reportMarkers?.length, gasStations?.length]);
 
   // Sync zoom when region changes (important for initial render)
   // CRITICAL: Skip zoom sync when screen is not focused
@@ -863,7 +897,7 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     }
     
     return filtered;
-  }, [validGasStations, mapFilters]);
+  }, [validGasStations, mapFilters?.showGasStations, mapFilters?.showPetron, mapFilters?.showShell, mapFilters?.showCaltex, mapFilters?.showOtherGasStations]);
 
   // Ref to prevent rapid state changes
   const isSelectingRef = useRef(false);
@@ -2193,7 +2227,9 @@ const ReportCard = React.memo<{
           {report.verified?.verifiedByAdmin > 0 && (
             <MaterialIcons name="verified" size={20} color="#4CAF50" style={styles.verifiedIcon} />
           )}
-          <Text style={styles.reportTitle}>{report.reportType}</Text>
+          <Text style={styles.reportTitle}>
+            {typeof report.reportType === 'string' ? report.reportType : String(report.reportType || 'Unknown')}
+          </Text>
         </View>
         {report.verified?.verifiedByAdmin > 0 && (
           <View style={styles.verifiedBadge}>
@@ -2203,8 +2239,14 @@ const ReportCard = React.memo<{
         )}
       </View>
 
-      <Text style={styles.reportDescription}>{report.description}</Text>
-      {report.address && <Text style={styles.reportAddress}>{report.address}</Text>}
+      <Text style={styles.reportDescription}>
+        {typeof report.description === 'string' ? report.description : String(report.description || '')}
+      </Text>
+      {report.address && (
+        <Text style={styles.reportAddress}>
+          {typeof report.address === 'string' ? report.address : String(report.address || '')}
+        </Text>
+      )}
       <Text style={styles.reportTimestamp}>
         {new Date(report.timestamp).toLocaleString()}
       </Text>
@@ -2250,18 +2292,72 @@ const GasStationCard = React.memo<{
     return null;
   }
 
+  // State for geocoded address (when API address is missing)
+  const [geocodedAddress, setGeocodedAddress] = React.useState<string | null>(null);
+  const [isGeocoding, setIsGeocoding] = React.useState(false);
+
+  // Helper to format address from station data
+  const formatStationAddress = (): string => {
+    if (typeof station.address === 'string' && station.address.trim()) {
+      return station.address;
+    }
+    if (station.address && typeof station.address === 'object') {
+      const parts = [
+        station.address.street,
+        station.address.city,
+        station.address.province
+      ].filter(Boolean);
+      if (parts.length > 0) {
+        return parts.join(', ');
+      }
+    }
+    return '';
+  };
+
+  // Reverse geocode address if missing
+  React.useEffect(() => {
+    // Reset geocoding state when station changes
+    setGeocodedAddress(null);
+    setIsGeocoding(false);
+    
+    const formattedAddress = formatStationAddress();
+    
+    // Only geocode if address is missing and we have coordinates
+    if (!formattedAddress && station?.location?.coordinates) {
+      setIsGeocoding(true);
+      const coords = station.location.coordinates;
+      const latitude = Number(coords[1]);
+      const longitude = Number(coords[0]);
+      
+      if (!isNaN(latitude) && !isNaN(longitude)) {
+        // Use the reverse geocoding function (already imported at top of file)
+        reverseGeocodeLocation(latitude, longitude)
+          .then((address) => {
+            setGeocodedAddress(address);
+            setIsGeocoding(false);
+          })
+          .catch((error) => {
+            console.warn('[GasStationCard] Reverse geocoding failed:', error);
+            setGeocodedAddress(null);
+            setIsGeocoding(false);
+          });
+      } else {
+        setIsGeocoding(false);
+      }
+    }
+    // Only depend on station ID and coordinates - reset and geocode when station changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [station?._id, station?.location?.coordinates]);
+
   // Get station coordinates for destination
   const getStationLocation = (): LocationCoords | null => {
     if (!station?.location?.coordinates) return null;
     const coords = station.location.coordinates;
+    const formattedAddress = formatStationAddress() || geocodedAddress || 'Gas Station';
     return {
       latitude: Number(coords[1]),
       longitude: Number(coords[0]),
-      address: typeof station.address === 'string' 
-        ? station.address 
-        : station.address 
-          ? `${station.address.street || ""}, ${station.address.city || ""}, ${station.address.province || ""}`.trim()
-          : 'Gas Station',
+      address: formattedAddress,
     };
   };
 
@@ -2286,6 +2382,9 @@ const GasStationCard = React.memo<{
     // Don't close modal - user might want to update prices
   };
 
+  // Determine display address
+  const displayAddress = formatStationAddress() || geocodedAddress || (isGeocoding ? 'Loading address...' : 'Address not available');
+
   return (
     <View style={styles.infoBox}>
       <View style={styles.stationHeader}>
@@ -2293,9 +2392,7 @@ const GasStationCard = React.memo<{
           <View style={styles.stationInfo}>
             <Text style={styles.stationTitle}>{station.brand || "NO NAME"}</Text>
             <Text style={styles.stationAddress}>
-              {typeof station.address === 'string' ? station.address : 
-               station.address ? `${station.address.street || "NO ADDRESS"}, ${station.address.city || ""}, ${station.address.province || ""}` : 
-               'Address not available'}
+              {displayAddress}
             </Text>
           </View>
           <View style={styles.stationIconContainer}>
@@ -2329,9 +2426,13 @@ const GasStationCard = React.memo<{
       {(station as any).services && (station as any).services.length > 0 && (
         <View style={styles.servicesContainer}>
           <Text style={styles.servicesTitle}>Services:</Text>
-          {(station as any).services.map((service: string, index: number) => (
-            <Text key={index} style={styles.serviceItem}>• {service}</Text>
-          ))}
+          {(station as any).services.map((service: any, index: number) => {
+            // Ensure service is converted to string to prevent rendering errors
+            const serviceText = typeof service === 'string' ? service : String(service || '');
+            return (
+              <Text key={index} style={styles.serviceItem}>• {serviceText}</Text>
+            );
+          })}
         </View>
       )}
 

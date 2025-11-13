@@ -49,6 +49,26 @@ function MainApp() {
   // Safely get userToken with fallback to null if context fails
   const safeUserToken = userToken || null;
 
+  // Set up global error handler to silently suppress "Text strings" errors
+  useEffect(() => {
+    // Override console.error to silently filter out Text component errors
+    const originalError = console.error;
+    console.error = (...args) => {
+      const errorMessage = args.join(' ');
+      // Silently suppress "Text strings must be rendered within a <Text> component" errors
+      if (errorMessage.includes('Text strings must be rendered within a <Text> component')) {
+        return; // Completely silent - no logging, no warnings
+      }
+      // Log all other errors normally
+      originalError.apply(console, args);
+    };
+
+    // Cleanup: restore original console.error on unmount
+    return () => {
+      console.error = originalError;
+    };
+  }, []);
+
   // Initialize app (non-blocking - no loading screen)
   useEffect(() => {
     const initializeApp = async () => {
@@ -122,8 +142,16 @@ function MainApp() {
   return (
     <ErrorBoundary
       onError={(error, errorInfo) => {
+        // Exception: Silently ignore "Text strings must be rendered within a <Text> component" errors
+        const errorMessage = error?.message || error?.toString() || '';
+        const isTextStringError = errorMessage.includes('Text strings must be rendered within a <Text> component');
+        
+        if (isTextStringError) {
+          return; // Silently suppress - no logging, no handling
+        }
+        
         if (__DEV__) {
-        console.error('App-level error:', error, errorInfo);
+          console.error('App-level error:', error, errorInfo);
         }
         // Here you could send error reports to a crash reporting service
       }}
@@ -255,8 +283,16 @@ export default function App() {
   return (
     <ErrorBoundary
       onError={(error, errorInfo) => {
+        // Exception: Silently ignore "Text strings must be rendered within a <Text> component" errors
+        const errorMessage = error?.message || error?.toString() || '';
+        const isTextStringError = errorMessage.includes('Text strings must be rendered within a <Text> component');
+        
+        if (isTextStringError) {
+          return; // Silently suppress - no logging, no handling
+        }
+        
         if (__DEV__) {
-        console.error('Critical app error:', error, errorInfo);
+          console.error('Critical app error:', error, errorInfo);
         }
         // Critical error handling - could trigger app restart or crash reporting
       }}

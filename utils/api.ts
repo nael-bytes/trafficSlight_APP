@@ -183,8 +183,13 @@ export const apiRequest = async <T = any>(
 };
 
 /**
- * Fetch reports from API
- * @param signal - Abort signal for cancellation
+ * Fetch reports from API with optional query parameters
+ * @param options - Query parameters and options
+ * @param options.signal - Abort signal for cancellation
+ * @param options.includeArchived - Include archived reports (default: false)
+ * @param options.includeInvalid - Include reports with invalid coordinates (default: false)
+ * @param options.filters - Filter criteria (types, status)
+ * @param options.viewport - Viewport bounds for filtering (north, south, east, west)
  * @returns Promise with reports array
  * 
  * API Response Format (from documentation):
@@ -194,8 +199,69 @@ export const apiRequest = async <T = any>(
  *   "statistics": {...}
  * }
  */
-export const fetchReports = async (signal?: AbortSignal) => {
-  const response = await apiRequest<{ success: boolean; data: any[]; statistics?: any }>('/api/reports', { signal });
+export interface FetchReportsOptions {
+  signal?: AbortSignal;
+  includeArchived?: boolean;
+  includeInvalid?: boolean;
+  filters?: {
+    types?: string[]; // ['Accident', 'Traffic Jam', 'Road Closure', 'Hazard']
+    status?: string[]; // ['active', 'resolved']
+  };
+  viewport?: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  };
+}
+
+export const fetchReports = async (options?: FetchReportsOptions | AbortSignal) => {
+  // Backward compatibility: if first argument is AbortSignal, treat it as signal
+  let signal: AbortSignal | undefined;
+  let includeArchived: boolean | undefined;
+  let includeInvalid: boolean | undefined;
+  let filters: { types?: string[]; status?: string[] } | undefined;
+  let viewport: { north: number; south: number; east: number; west: number } | undefined;
+
+  if (options instanceof AbortSignal) {
+    // Old signature: fetchReports(signal)
+    signal = options;
+  } else if (options) {
+    // New signature: fetchReports({ signal, includeArchived, ... })
+    signal = options.signal;
+    includeArchived = options.includeArchived;
+    includeInvalid = options.includeInvalid;
+    filters = options.filters;
+    viewport = options.viewport;
+  }
+
+  // Build query parameters
+  const queryParams = new URLSearchParams();
+  if (includeArchived === true) {
+    queryParams.append('includeArchived', 'true');
+  }
+  if (includeInvalid === true) {
+    queryParams.append('includeInvalid', 'true');
+  }
+  if (filters) {
+    queryParams.append('filters', JSON.stringify(filters));
+  }
+  if (viewport) {
+    queryParams.append('viewport', JSON.stringify(viewport));
+  }
+
+  const url = `/api/reports${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+  
+  if (__DEV__ && (filters || viewport || includeArchived || includeInvalid)) {
+    console.log('[api.ts] Fetching reports with query parameters:', {
+      includeArchived,
+      includeInvalid,
+      filters,
+      viewport,
+    });
+  }
+
+  const response = await apiRequest<{ success: boolean; data: any[]; statistics?: any }>(url, { signal });
   
   // CRITICAL: Handle documented response format { success: true, data: [...] }
   // If response has success and data fields, extract data array
