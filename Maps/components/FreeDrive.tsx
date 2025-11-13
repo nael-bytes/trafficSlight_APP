@@ -327,7 +327,7 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
           >
             <MaterialIcons
               name={isTracking ? 'stop' : 'play-arrow'}
-              size={width * 0.08}
+              size={width * 0.16}
               color="#FFF"
             />
           </TouchableOpacity>
@@ -358,7 +358,7 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
                   style={[styles.smallButton, styles.reportButton]}
                   onPress={onShowReportModal}
                 >
-                  <MaterialIcons name="warning" size={width * 0.04} color="#FFF" />
+                  <MaterialIcons name="warning" size={width * 0.045} color="#FFF" />
                 </TouchableOpacity>
 
                 {/* Maintenance/Route Button */}
@@ -367,7 +367,7 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
                     style={[styles.smallButton, styles.maintenanceButton]}
                     onPress={handleMaintenancePress}
                   >
-                    <MaterialIcons name="build" size={width * 0.04} color="#FFF" />
+                    <MaterialIcons name="build" size={width * 0.045} color="#FFF" />
                   </TouchableOpacity>
                 ) : (
                   onShowRouteButton && (
@@ -375,7 +375,7 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
                       style={[styles.smallButton, styles.routeButton]}
                       onPress={onShowRouteButton}
                     >
-                      <MaterialIcons name="route" size={width * 0.04} color="#000" />
+                      <MaterialIcons name="route" size={width * 0.045} color="#000" />
                     </TouchableOpacity>
                   )
                 )}
@@ -394,7 +394,7 @@ export const FreeDrive: React.FC<FreeDriveProps> = ({
                 >
                   <MaterialIcons
                     name="visibility"
-                    size={width * 0.04}
+                    size={width * 0.045}
                     color={showMarkers ? '#FFF' : '#000'}
                   />
                 </TouchableOpacity>
@@ -439,8 +439,9 @@ const styles = StyleSheet.create({
   rightButtons: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 16,
+    position: 'relative',
   },
   motorButton: {
     height: height * 0.12,
@@ -454,6 +455,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
+    position: 'absolute',
+    left: 16,
   },
   motorButtonText: {
     color: '#FFF',
@@ -484,6 +487,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
+    alignSelf: 'center',
   },
   pauseButton: {
     width: width * 0.15,
@@ -496,20 +500,23 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
+    marginLeft: 12,
   },
   smallButtonsContainer: {
     alignItems: 'center',
     gap: 8,
     justifyContent: 'center',
+    position: 'absolute',
+    right: 16,
   },
   smallButtonsRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 7,
   },
   smallButton: {
-    width: width * 0.12,
-    height: width * 0.12,
-    borderRadius: width * 0.06,
+    width: width * 0.10,
+    height: width * 0.10,
+    borderRadius: width * 0.055,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',

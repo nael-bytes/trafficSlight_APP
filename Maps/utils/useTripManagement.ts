@@ -124,7 +124,7 @@ export const useTripManagement = ({
     setNavigationStartTime,
 }: UseTripManagementParams): UseTripManagementReturn => {
   // Create trip data for modal display
-  const createTripDataForModal = useCallback((tripEndTime: Date, hasArrived: boolean = false) => {
+  const createTripDataForModal = useCallback((tripEndTime: Date, hasArrived: boolean = false, endAddressOverride?: string) => {
     if (__DEV__) {
       console.log('[useTripManagement] 📝 createTripDataForModal called', {
         tripEndTime: tripEndTime.toISOString(),
@@ -134,9 +134,14 @@ export const useTripManagement = ({
         routeCoordinatesCount: routeCoordinates?.length || 0,
         hasArrived,
         hasDestination: !!mapState.destination,
+        endAddressOverride,
+        currentEndAddress: endAddress,
         timestamp: new Date().toISOString(),
       });
     }
+
+    // Use override address if provided, otherwise use state value
+    const finalEndAddress = endAddressOverride || endAddress;
 
     const tripData = createTripDataUtil({
       tripEndTime,
@@ -145,7 +150,7 @@ export const useTripManagement = ({
       currentLocation: mapState.currentLocation,
       destination: mapState.destination,
       startAddress,
-      endAddress,
+      endAddress: finalEndAddress,
       selectedMotor,
       isBackgroundTracking: isBackgroundTracking.current,
       hasArrived,
@@ -393,10 +398,16 @@ export const useTripManagement = ({
       setShowTripSummary(false);
       setTripMaintenanceActions([]); // Reset maintenance actions
       setTripDataForModal(null); // Clear trip data after saving
+      setStartAddress(''); // Clear start address
+      setEndAddress(''); // Clear end address
+      
+      // Reset destination flow state to initial state
+      resetDestinationFlow();
 
       Toast.show({
         type: 'success',
         text1: 'Trip Saved',
+        text2: 'Trip data saved successfully',
       });
     } catch (error: any) {
       Toast.show({
@@ -405,7 +416,7 @@ export const useTripManagement = ({
         text2: error.message || 'Unknown error',
       });
     }
-  }, [rideStats, routeCoordinates, resetTracking, selectedMotor, user, mapState.currentLocation, tripDataForModal, startAddress, endAddress, completeTrip, updateFuelLevel, setSelectedMotor, setScreenMode, setShowTripSummary, setTripMaintenanceActions, setTripDataForModal, currentTrip]);
+  }, [rideStats, routeCoordinates, resetTracking, selectedMotor, user, mapState.currentLocation, tripDataForModal, startAddress, endAddress, completeTrip, updateFuelLevel, setSelectedMotor, setScreenMode, setShowTripSummary, setTripMaintenanceActions, setTripDataForModal, setStartAddress, setEndAddress, resetDestinationFlow, currentTrip]);
 
   // Handle trip cancel
   const handleTripCancel = useCallback(async () => {

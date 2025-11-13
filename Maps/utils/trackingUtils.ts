@@ -328,7 +328,7 @@ export interface StopTrackingParams {
   onResetLastProcessedDistance: () => void;
   onSetScreenMode: (mode: 'planning' | 'tracking' | 'summary') => void;
   onSetShowTripSummary: (show: boolean) => void;
-  onCreateTripData: (tripEndTime: Date, hasArrived?: boolean) => any;
+  onCreateTripData: (tripEndTime: Date, hasArrived?: boolean, endAddressOverride?: string) => any;
 }
 
 /**
@@ -364,6 +364,10 @@ export const stopTracking = async (params: StopTrackingParams): Promise<void> =>
   
   try {
     // Step 1: Get end address before stopping (with timeout)
+    // Store the resolved address in a variable to pass directly to trip data creation
+    // This avoids timing issues with React state updates
+    let resolvedEndAddress = endAddress || 'Unknown Location';
+    
     if (__DEV__) {
       console.log('[TrackingUtils] 📍 Getting end address...');
     }
@@ -375,7 +379,8 @@ export const stopTracking = async (params: StopTrackingParams): Promise<void> =>
         );
         
         const address = await Promise.race([addressPromise, timeoutPromise]);
-        onSetEndAddress(address);
+        resolvedEndAddress = address; // Store the resolved address
+        onSetEndAddress(address); // Also update state for future use
         if (__DEV__) {
           console.log('[TrackingUtils] ✅ End address obtained:', address);
         }
@@ -383,12 +388,14 @@ export const stopTracking = async (params: StopTrackingParams): Promise<void> =>
         if (__DEV__) {
           console.warn('[TrackingUtils] ⚠️ Failed to get end address:', error);
         }
+        resolvedEndAddress = 'Unknown Location';
         onSetEndAddress('Unknown Location');
       }
     } else {
       if (__DEV__) {
         console.log('[TrackingUtils] ⚠️ No current location for end address');
       }
+      resolvedEndAddress = 'Unknown Location';
       onSetEndAddress('Unknown Location');
     }
     
@@ -415,10 +422,11 @@ export const stopTracking = async (params: StopTrackingParams): Promise<void> =>
     }
     
     // Step 4: Create trip data for modal with fallback
+    // Pass the resolved end address directly to avoid React state timing issues
     console.log('[TrackingUtils] 📊 Creating trip data...');
     try {
       const tripEndTime = new Date();
-      const tripData = onCreateTripData(tripEndTime, hasArrived);
+      const tripData = onCreateTripData(tripEndTime, hasArrived, resolvedEndAddress);
       onSetTripDataForModal(tripData);
       console.log('[TrackingUtils] ✅ Trip data created successfully', {
         hasArrived,

@@ -74,25 +74,29 @@ export const fetchRoutesAsync = async (
     console.log('[AsyncMapOperations] Fetching routes from Google Maps API');
   }
 
-  // CRITICAL: Use Promise.race with timeout for faster failure detection
-  const timeoutMs = 10000; // Reduced from 15s to 10s for faster response
-  const fetchPromise = fetch(url);
-  const timeoutPromise = new Promise<never>((_, reject) => 
-    setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
-  );
-
+  // NOTE: Timeout is handled by runAsyncOperation wrapper, so we don't need a timeout here
+  // This prevents double timeout issues and allows the wrapper to handle retries properly
   try {
-    const response = await Promise.race([fetchPromise, timeoutPromise]);
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
     const data: DirectionsResponse = await response.json();
 
     if (data.status !== 'OK') {
-      throw new Error(data.error_message || 'Failed to fetch routes');
+      throw new Error(data.error_message || `Google Maps API error: ${data.status}`);
     }
 
     return data.routes;
-  } catch (error) {
+  } catch (error: any) {
     if (__DEV__) {
       console.error('[AsyncMapOperations] Route fetch error:', error);
+    }
+    // Re-throw with more context
+    if (error.message && !error.message.includes('timeout')) {
+      throw new Error(`Route fetch failed: ${error.message}`);
     }
     throw error;
   }
@@ -107,8 +111,8 @@ export const createDebouncedRouteFetcher = () => {
     500, // 500ms debounce
     {
       priority: 'normal',
-      timeout: 10000,
-      retries: 1,
+      timeout: 30000, // Increased to 30s to match route fetching timeout
+      retries: 2,
     }
   );
 };

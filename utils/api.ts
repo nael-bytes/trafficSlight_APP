@@ -743,6 +743,38 @@ export const updateFuelLevel = async (motorId: string, fuelLevel: number) => {
 };
 
 /**
+ * Delete a user motor
+ * Uses: DELETE /api/user-motors/:id (as per USER_FRONTEND_IMPLEMENTATION_GUIDE.md)
+ * @param motorId - Motor ID to delete
+ * @returns Promise with response
+ */
+export const deleteUserMotor = async (motorId: string) => {
+  // Validate input parameters
+  if (!motorId || typeof motorId !== 'string') {
+    throw new Error('Invalid motor ID provided');
+  }
+
+  try {
+    const response = await apiRequest(`/api/user-motors/${motorId}`, {
+      method: 'DELETE',
+    });
+    
+    console.log('[API] Motor deleted successfully:', {
+      motorId,
+      timestamp: new Date().toISOString()
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('[API] Failed to delete motor:', {
+      motorId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
+  }
+};
+
+/**
  * Fetch all data for a user (reports, gas stations, motors)
  * @param userId - User ID
  * @param signal - Abort signal for cancellation

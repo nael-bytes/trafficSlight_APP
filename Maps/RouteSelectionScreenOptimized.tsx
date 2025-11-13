@@ -1737,8 +1737,11 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                     ? hasArrivedFromComponent 
                     : hasArrived;
                   
-                  if (isTracking) {
-                    try {
+                  // Always create trip data and show modal, regardless of isTracking status
+                  // This ensures trip summary appears on first stop and subsequent stops
+                  try {
+                    // If tracking is active, use stopTrackingUtil (handles full tracking stop)
+                    if (isTracking) {
                       await stopTrackingUtil({
                         selectedMotor,
                         currentLocation: mapState.currentLocation,
@@ -1763,11 +1766,51 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                         onSetShowTripSummary: setShowTripSummary,
                         onCreateTripData: createTripDataForModal,
                       });
-                    } catch (error: any) {
-                      console.error('[RouteSelection] Failed to stop tracking on navigation stop:', error);
+                    } else {
+                      // If not tracking, still create trip data for destination-based navigation
+                      // This handles the case where navigation stops before tracking starts
+                      console.log('[RouteSelection] Creating trip data for non-tracking navigation stop');
+                      
+                      // Get end address if not already set
+                      let resolvedEndAddress = endAddress;
+                      if (!endAddress && mapState.currentLocation) {
+                        try {
+                          const { reverseGeocodeLocation } = await import('../../utils/location');
+                          const address = await reverseGeocodeLocation(mapState.currentLocation);
+                          resolvedEndAddress = address;
+                          setEndAddress(address);
+                        } catch (error) {
+                          console.warn('[RouteSelection] Failed to get end address:', error);
+                          resolvedEndAddress = 'Unknown Location';
+                          setEndAddress('Unknown Location');
+                        }
+                      }
+                      
+                      // Create trip data using the same function
+                      // Pass the resolved end address directly to avoid React state timing issues
+                      const tripEndTime = new Date();
+                      const tripData = createTripDataForModal(tripEndTime, finalHasArrived, resolvedEndAddress);
+                      setTripDataForModal(tripData);
+                      
+                      // Update screen mode and show trip summary
+                      setScreenMode('summary');
+                      setShowTripSummary(true);
+                    }
+                  } catch (error: any) {
+                    console.error('[RouteSelection] Failed to stop tracking on navigation stop:', error);
+                    
+                    // Fallback: Create minimal trip data even if there's an error
+                    try {
+                      const tripEndTime = new Date();
+                      const tripData = createTripDataForModal(tripEndTime, finalHasArrived);
+                      setTripDataForModal(tripData);
+                      setShowTripSummary(true);
+                    } catch (fallbackError) {
+                      console.error('[RouteSelection] Failed to create fallback trip data:', fallbackError);
                     }
                   }
                   
+                  // Always update navigation state, regardless of tracking status
                   setIsNavigating(false);
                   setNavigationStartTime(null);
                   setIsFollowingUser(false);
@@ -1776,9 +1819,10 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                   // Reset arrival state
                   resetArrival();
                   
-                  // Show trip summary modal after navigation ends
-                  // Trip summary will show success status if finalHasArrived is true
-                  updateUiState({ showTripSummary: true });
+                  // Ensure trip summary modal is shown (backup in case stopTrackingUtil didn't show it)
+                  if (!showTripSummary) {
+                    updateUiState({ showTripSummary: true });
+                  }
                 }}
                 onReroute={() => fetchRoutes()}
                 onMaintenanceAction={handleMaintenanceAction}
@@ -1996,6 +2040,10 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                 visible={showTripSummary}
                 tripData={tripDataForModal}
                 rideStats={rideStats}
+                selectedMotor={selectedMotor}
+                startAddress={startAddress}
+                endAddress={endAddress}
+                tripMaintenanceActions={tripMaintenanceActions}
                 onClose={memoizedHandleTripClose}
                 onSave={handleTripSave}
                 onCancel={handleTripCancel}

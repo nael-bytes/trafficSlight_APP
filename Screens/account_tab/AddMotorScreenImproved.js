@@ -22,6 +22,7 @@ import { LOCALHOST_IP } from "@env";
 import { useUser } from "../../AuthContext/UserContextImproved";
 import { LinearGradient } from 'expo-linear-gradient';
 import Toast from 'react-native-toast-message';
+import { deleteUserMotor } from '../../utils/api';
 
 // Constants
 const API_ENDPOINTS = {
@@ -309,13 +310,8 @@ export default function AddMotorScreen({ navigation }) {
           style: "destructive",
           onPress: async () => {
             try {
-              const response = await fetch(`${LOCALHOST_IP}${API_ENDPOINTS.USER_MOTORS}/user/${user._id}`, {
-                method: "DELETE",
-              });
-              
-              if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-              }
+              // Use centralized API function with proper endpoint: DELETE /api/user-motors/:id
+              await deleteUserMotor(id);
 
               Toast.show({
                 type: 'success',
@@ -336,7 +332,7 @@ export default function AddMotorScreen({ navigation }) {
         },
       ]
     );
-  }, [user, fetchUserMotors]);
+  }, [fetchUserMotors]);
 
   // Custom model creation with validation
   const handleCreateCustomModel = useCallback(async () => {

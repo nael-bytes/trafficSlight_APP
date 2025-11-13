@@ -139,33 +139,46 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
     return `${minutes}m`;
   };
 
-  const formatDateTime = (date: Date | string | undefined): string => {
+  const formatDateTime = (date: Date | string | undefined | null): string => {
     if (!date) return 'N/A';
-    const d = new Date(date);
-    return d.toLocaleString();
+    try {
+      const d = new Date(date);
+      if (isNaN(d.getTime())) {
+        return 'N/A';
+      }
+      return d.toLocaleString();
+    } catch (error) {
+      return 'N/A';
+    }
   };
 
-  const formatDuration = (minutes: number | undefined): string => {
+  const formatDuration = (minutes: number | undefined | null): string => {
     console.log('[TripSummaryModal] formatDuration called with:', {
       minutes,
       minutesType: typeof minutes,
-      isNaN: isNaN(minutes as number),
+      isNaN: minutes !== undefined && minutes !== null ? isNaN(Number(minutes)) : true,
       isFalsy: !minutes,
       isZero: minutes === 0
     });
     
-    if (minutes === undefined || minutes === null || isNaN(minutes as number)) {
-      console.log('[TripSummaryModal] Duration is undefined/null/NaN, returning N/A');
+    if (minutes === undefined || minutes === null) {
+      console.log('[TripSummaryModal] Duration is undefined/null, returning N/A');
       return 'N/A';
     }
     
-    if (minutes <= 0) {
+    const numMinutes = Number(minutes);
+    if (isNaN(numMinutes)) {
+      console.log('[TripSummaryModal] Duration is NaN, returning N/A');
+      return 'N/A';
+    }
+    
+    if (numMinutes <= 0) {
       console.log('[TripSummaryModal] Duration is zero or negative, returning 0m');
       return '0m';
     }
     
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.floor(minutes % 60);
+    const hours = Math.floor(numMinutes / 60);
+    const mins = Math.floor(numMinutes % 60);
     if (hours > 0) {
       return `${hours}h ${mins}m`;
     }
@@ -212,7 +225,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
   return (
     <Modal
       transparent
-      animationType="fade"
+      animationType="slide"
       visible={visible}
       onRequestClose={onClose}
     >
@@ -236,22 +249,28 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                 <MaterialIcons name="place" size={20} color="#00ADB5" />
                 <View style={styles.analyticsCompare}>
                   <Text style={styles.analyticsLabel}>Destination:</Text>
-                  <Text style={styles.analyticsValue}>{tripData?.destination || "Free Drive"}</Text>
+                  <Text style={styles.analyticsValue}>
+                    {String(tripData?.destination || "Free Drive")}
+                  </Text>
                   <Text style={styles.analyticsLabel}>Status:</Text>
                   <Text style={[styles.analyticsValue, { color: getStatusColor(tripData?.status) }]}>
-                    {tripData?.status?.toUpperCase() || "COMPLETED"}
+                    {String(tripData?.status?.toUpperCase() || "COMPLETED")}
                   </Text>
                 </View>
               </View>
 
               <View style={styles.summaryRow}>
                 <MaterialIcons name="my-location" size={20} color="#34495e" />
-                <Text style={styles.summaryText}>From: {tripData?.startLocation?.address || startAddress || "Unknown"}</Text>
+                <Text style={styles.summaryText}>
+                  From: {String(tripData?.startLocation?.address || startAddress || "Unknown")}
+                </Text>
               </View>
 
               <View style={styles.summaryRow}>
                 <MaterialIcons name="place" size={20} color="#e74c3c" />
-                <Text style={styles.summaryText}>To: {tripData?.endLocation?.address || endAddress || "Unknown Location"}</Text>
+                <Text style={styles.summaryText}>
+                  To: {String(tripData?.endLocation?.address || endAddress || "Unknown Location")}
+                </Text>
               </View>
             </View>
 
@@ -265,7 +284,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                   <Text style={styles.analyticsLabel}>Planned Distance:</Text>
                   <Text style={styles.analyticsValue}>{((tripData?.distance || 0) / 1000).toFixed(2)} km</Text>
                   <Text style={styles.analyticsLabel}>Actual Distance:</Text>
-                  <Text style={styles.analyticsValue}>{(tripData?.actualDistance || rideStats.distance).toFixed(2)} km</Text>
+                  <Text style={styles.analyticsValue}>{((tripData?.actualDistance || rideStats?.distance || 0)).toFixed(2)} km</Text>
                 </View>
               </View>
 
@@ -299,11 +318,12 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                 <MaterialIcons name="timer" size={20} color="#8e44ad" />
                 <View style={styles.analyticsCompare}>
                   <Text style={styles.analyticsLabel}>Duration:</Text>
-                  <Text style={styles.analyticsValue}>{formatDuration(
-                    tripData?.duration || 
-                    (rideStats.duration && rideStats.duration > 0 ? Math.round(rideStats.duration / 60) : undefined)
-                  )}</Text>
-                 
+                  <Text style={styles.analyticsValue}>
+                    {formatDuration(
+                      tripData?.duration || 
+                      (rideStats?.duration && rideStats.duration > 0 ? Math.round(rideStats.duration / 60) : undefined)
+                    )}
+                  </Text>
                 </View>
               </View>
 
@@ -311,10 +331,10 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                 <MaterialIcons name="speed" size={20} color="#e67e22" />
                 <View style={styles.analyticsCompare}>
                   <Text style={styles.analyticsLabel}>Avg Speed:</Text>
-                  <Text style={styles.analyticsValue}>{(tripData?.kmph || rideStats.avgSpeed).toFixed(1)} km/h</Text>
+                  <Text style={styles.analyticsValue}>{((tripData?.kmph || rideStats?.avgSpeed || 0)).toFixed(1)} km/h</Text>
                   <Text style={styles.analyticsLabel}>Traffic:</Text>
                   <Text style={[styles.analyticsValue, { color: getTrafficConditionColor(tripData?.trafficCondition) }]}>
-                    {tripData?.trafficCondition ? tripData.trafficCondition.toUpperCase() : 'N/A'}
+                    {String(tripData?.trafficCondition ? tripData.trafficCondition.toUpperCase() : 'N/A')}
                   </Text>
                 </View>
               </View>
@@ -330,10 +350,12 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                   <View style={styles.analyticsCompare}>
                     <Text style={styles.analyticsLabel}>Was Rerouted:</Text>
                     <Text style={[styles.analyticsValue, { color: tripData?.wasRerouted ? '#e74c3c' : '#27ae60' }]}>
-                      {tripData?.wasRerouted ? 'YES' : 'NO'}
+                      {String(tripData?.wasRerouted ? 'YES' : 'NO')}
                     </Text>
                     <Text style={styles.analyticsLabel}>Reroute Count:</Text>
-                    <Text style={styles.analyticsValue}>{tripData?.rerouteCount || 0}</Text>
+                    <Text style={styles.analyticsValue}>
+                      {String(tripData?.rerouteCount != null && !isNaN(Number(tripData.rerouteCount)) ? tripData.rerouteCount : 0)}
+                    </Text>
                   </View>
                 </View>
 
@@ -342,7 +364,7 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                   <View style={styles.analyticsCompare}>
                     <Text style={styles.analyticsLabel}>Background Tracking:</Text>
                     <Text style={[styles.analyticsValue, { color: tripData?.wasInBackground ? '#f39c12' : '#27ae60' }]}>
-                      {tripData?.wasInBackground ? 'YES' : 'NO'}
+                      {String(tripData?.wasInBackground ? 'YES' : 'NO')}
                     </Text>
                   </View>
                 </View>
@@ -358,9 +380,15 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                   <MaterialIcons name="two-wheeler" size={20} color="#1abc9c" />
                   <View style={styles.analyticsCompare}>
                     <Text style={styles.analyticsLabel}>Motor:</Text>
-                    <Text style={styles.analyticsValue}>{selectedMotor.nickname || selectedMotor.name || "--"}</Text>
+                    <Text style={styles.analyticsValue}>
+                      {String(selectedMotor?.nickname || selectedMotor?.name || "--")}
+                    </Text>
                     <Text style={styles.analyticsLabel}>Current Fuel Level:</Text>
-                    <Text style={styles.analyticsValue}>{Math.round(selectedMotor.currentFuelLevel) || "--"}%</Text>
+                    <Text style={styles.analyticsValue}>
+                      {selectedMotor.currentFuelLevel != null && !isNaN(selectedMotor.currentFuelLevel) 
+                        ? `${Math.round(selectedMotor.currentFuelLevel)}%` 
+                        : "--"}
+                    </Text>
                     
                   </View>
                 </View>
@@ -373,7 +401,9 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
                 <Text style={styles.sectionTitle}>Analytics Notes</Text>
                 <View style={styles.summaryRow}>
                   <MaterialIcons name="note" size={20} color="#9b59b6" />
-                  <Text style={styles.summaryText}>{tripData.analyticsNotes}</Text>
+                  <Text style={styles.summaryText}>
+                    {String(tripData.analyticsNotes || "")}
+                  </Text>
                 </View>
               </View>
             )}
@@ -383,25 +413,42 @@ export const TripSummaryModal: React.FC<TripSummaryModalProps> = memo(({
               <View style={styles.summarySection}>
                 <Text style={styles.sectionTitle}>Maintenance During Trip</Text>
                 
-                {tripMaintenanceActions.map((action, index) => (
-                  <View key={index} style={styles.maintenanceRow}>
-                    <MaterialIcons 
-                      name={action.type === 'refuel' ? 'local-gas-station' : action.type === 'oil_change' ? 'opacity' : 'build'} 
-                      size={20} 
-                      color="#FF9800" 
-                    />
-                    <View style={styles.maintenanceDetails}>
-                      <Text style={styles.maintenanceType}>
-                        {action.type.replace('_', ' ').toUpperCase()}
-                      </Text>
-                      <Text style={styles.maintenanceInfo}>
-                        Cost: ₱{action.cost} 
-                        {action.quantity && ` • Quantity: ${action.quantity.toFixed(2)}L`}
-                        {action.notes && ` • Notes: ${action.notes}`}
-                      </Text>
+                {tripMaintenanceActions.map((action, index) => {
+                  // Safely extract and validate action properties
+                  const actionType = action?.type || 'unknown';
+                  const actionCost = action?.cost != null && !isNaN(Number(action.cost)) ? Number(action.cost) : null;
+                  const actionQuantity = action?.quantity != null && !isNaN(Number(action.quantity)) ? Number(action.quantity) : null;
+                  const actionNotes = action?.notes ? String(action.notes) : null;
+                  
+                  // Safely format type
+                  const formattedType = actionType && typeof actionType === 'string' 
+                    ? actionType.replace('_', ' ').toUpperCase() 
+                    : 'UNKNOWN';
+                  
+                  // Build maintenance info string safely
+                  const costText = actionCost != null ? `₱${actionCost.toFixed(2)}` : '--';
+                  const quantityText = actionQuantity != null ? ` • Quantity: ${actionQuantity.toFixed(2)}L` : '';
+                  const notesText = actionNotes ? ` • Notes: ${actionNotes}` : '';
+                  const maintenanceInfoText = `Cost: ${costText}${quantityText}${notesText}`;
+                  
+                  return (
+                    <View key={index} style={styles.maintenanceRow}>
+                      <MaterialIcons 
+                        name={actionType === 'refuel' ? 'local-gas-station' : actionType === 'oil_change' ? 'opacity' : 'build'} 
+                        size={20} 
+                        color="#FF9800" 
+                      />
+                      <View style={styles.maintenanceDetails}>
+                        <Text style={styles.maintenanceType}>
+                          {formattedType}
+                        </Text>
+                        <Text style={styles.maintenanceInfo}>
+                          {maintenanceInfoText}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             )}
           </ScrollView>

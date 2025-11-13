@@ -627,6 +627,7 @@ export default function MotorPage() {
             <TouchableOpacity style={styles.calcBtn} onPress={() => navigation.navigate?.("FuelCalculator")}>
               <LinearGradient colors={isDarkMode ? ["#00858B", "#006A6F"] : ["#00ADB5", "#00C2CC"]} style={styles.calcBtnGradient}>
                 <Text style={styles.calcBtnText}>Update Fuel Efficiency</Text>
+                <Text style={styles.calcBtnSubtitle}>Full Tank method data</Text>
               </LinearGradient>
             </TouchableOpacity>
           }
@@ -694,6 +695,13 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "600",
     fontSize: 16,
+  },
+  calcBtnSubtitle: {
+    color: "#fff",
+    fontWeight: "400",
+    fontSize: 12,
+    marginTop: 4,
+    opacity: 0.9,
   },
   section: {
     marginTop: 10,

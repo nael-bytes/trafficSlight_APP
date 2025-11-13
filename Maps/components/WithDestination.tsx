@@ -45,6 +45,20 @@ import { canReachDestination, calculateDistancePossible } from '../utils/fuelCal
 import { PredictiveAnalytics } from './PredictiveAnalytics';
 import { distanceToPolyline, haversineDistance, coordinatesToPolyline } from '../utils/geo';
 import { RouteSelectionModal } from '../../components/RouteSelectionModal-mapscreentry';
+import { getAuthToken } from '../../utils/api';
+import { LOCALHOST_IP } from '@env';
+
+// API Base URL
+const API_BASE = LOCALHOST_IP || "https://ts-backend-1-jyit.onrender.com";
+
+// Fuel level data interface
+interface FuelLevelData {
+  percentage: number;
+  liters: number;
+  fuelTankCapacity: number;
+  drivableDistance: number;
+  isLowFuel: boolean;
+}
 
 /**
  * Props for WithDestination component
@@ -183,6 +197,12 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
   const [routeModalManuallyClosed, setRouteModalManuallyClosed] = useState(false); // Track manual close
   const [canReachDestinationState, setCanReachDestinationState] = useState(true);
   const [fuelWarning, setFuelWarning] = useState<string | null>(null);
+  
+  // Fuel level state
+  const [fuelLevelData, setFuelLevelData] = useState<FuelLevelData | null>(null);
+  const [fuelLevelLoading, setFuelLevelLoading] = useState(false);
+  const [fuelLevelError, setFuelLevelError] = useState<string | null>(null);
+  const fuelLevelIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // Auto-show route selection modal when routes are found (unless manually closed)
   useEffect(() => {
@@ -410,18 +430,121 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
   }, [currentLocation, isNavigating, selectedRoute, destination, onStopNavigation]);
 
   /**
-   * Reset proximity flags when navigation stops
+   * Reset proximity flags and internal state when navigation stops
    */
   useEffect(() => {
     if (!isNavigating) {
+      // Reset proximity flags
       hasShownProximity500.current = false;
       hasShownProximity200.current = false;
       hasShownProximity50.current = false;
+      
+      // Reset navigation-related state
       setArrivalProximity(null);
       setOffRouteCount(0);
       setRerouting(false);
+      
+      // Clear fuel level data when navigation stops
+      if (fuelLevelIntervalRef.current) {
+        clearInterval(fuelLevelIntervalRef.current);
+        fuelLevelIntervalRef.current = null;
+      }
+      setFuelLevelData(null);
+      setFuelLevelError(null);
+      
+      // Reset modals to ensure clean state for next trip
+      setShowConfirmationModal(false);
+      setShowMotorSelectionModal(false);
+      setShowRouteSelectionModal(false);
+      setRouteModalManuallyClosed(false);
     }
   }, [isNavigating]);
+
+  /**
+   * Fetch fuel level from API
+   */
+  const fetchFuelLevel = useCallback(async () => {
+    if (!selectedMotor?._id) {
+      setFuelLevelData(null);
+      return;
+    }
+
+    try {
+      setFuelLevelLoading(true);
+      setFuelLevelError(null);
+
+      const token = await getAuthToken();
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+      
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${API_BASE}/api/user-motors/${selectedMotor._id}/fuel`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Failed to fetch fuel level' }));
+        throw new Error(errorData.message || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.success && data.fuelLevel) {
+        setFuelLevelData({
+          percentage: data.fuelLevel.percentage || 0,
+          liters: data.fuelLevel.liters || 0,
+          fuelTankCapacity: data.fuelLevel.fuelTankCapacity || 0,
+          drivableDistance: data.drivableDistance?.withCurrentFuel || 0,
+          isLowFuel: data.alerts?.isLowFuel || false,
+        });
+        setFuelLevelError(null);
+      } else {
+        throw new Error('Invalid response format');
+      }
+    } catch (error: any) {
+      console.error('[WithDestination] ❌ Error fetching fuel level:', error);
+      setFuelLevelError(error.message || 'Failed to fetch fuel level');
+      setFuelLevelData(null);
+    } finally {
+      setFuelLevelLoading(false);
+    }
+  }, [selectedMotor?._id]);
+
+  /**
+   * Poll fuel level when navigating
+   */
+  useEffect(() => {
+    if (isNavigating && selectedMotor?._id) {
+      // Fetch immediately
+      fetchFuelLevel();
+      
+      // Set up polling every 60 seconds
+      fuelLevelIntervalRef.current = setInterval(() => {
+        fetchFuelLevel();
+      }, 60000); // 60 seconds
+
+      return () => {
+        if (fuelLevelIntervalRef.current) {
+          clearInterval(fuelLevelIntervalRef.current);
+          fuelLevelIntervalRef.current = null;
+        }
+      };
+    } else {
+      // Clear interval when not navigating
+      if (fuelLevelIntervalRef.current) {
+        clearInterval(fuelLevelIntervalRef.current);
+        fuelLevelIntervalRef.current = null;
+      }
+      // Clear fuel level data when navigation stops
+      setFuelLevelData(null);
+      setFuelLevelError(null);
+    }
+  }, [isNavigating, selectedMotor?._id, fetchFuelLevel]);
 
   /**
    * Handle navigation start with confirmation
@@ -748,9 +871,35 @@ export const WithDestination: React.FC<WithDestinationProps> = ({
               <Text style={styles.statLabel}>Remaining</Text>
             </View>
             <View style={styles.statItem}>
-              <MaterialIcons name="schedule" size={20} color="#FFF" />
-              <Text style={styles.statValue}>{formatTime(currentEta)}</Text>
-              <Text style={styles.statLabel}>ETA</Text>
+              <MaterialIcons 
+                name={fuelLevelData?.isLowFuel ? "warning" : "local-gas-station"} 
+                size={20} 
+                color={fuelLevelData?.isLowFuel ? "#FF9800" : "#FFF"} 
+              />
+              {fuelLevelLoading ? (
+                <ActivityIndicator size="small" color="#FFF" style={{ marginVertical: 5 }} />
+              ) : fuelLevelError ? (
+                <Text style={[styles.statValue, styles.errorText]}>--</Text>
+              ) : fuelLevelData ? (
+                <>
+                  <Text style={[
+                    styles.statValue,
+                    fuelLevelData.isLowFuel && styles.lowFuelText
+                  ]}>
+                    {fuelLevelData.percentage.toFixed(0)}%
+                  </Text>
+                  {fuelLevelData.liters > 0 && (
+                    <Text style={styles.statSubValue}>
+                      {fuelLevelData.liters.toFixed(1)}L
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Text style={styles.statValue}>--</Text>
+              )}
+              <Text style={styles.statLabel}>
+                {fuelLevelData?.isLowFuel ? 'Low Fuel' : 'Fuel'}
+              </Text>
             </View>
             <View style={styles.statItem}>
               <MaterialIcons name="speed" size={20} color="#FFF" />
@@ -1226,10 +1375,22 @@ const styles = StyleSheet.create({
     marginTop: 5,
     marginBottom: 3,
   },
+  statSubValue: {
+    fontSize: 12,
+    color: '#BBB',
+    marginTop: -2,
+  },
   statLabel: {
     fontSize: 12,
     color: '#BBB',
     textTransform: 'uppercase',
+  },
+  lowFuelText: {
+    color: '#FF9800',
+  },
+  errorText: {
+    color: '#F44336',
+    fontSize: 14,
   },
   navigationActions: {
     flexDirection: 'row',

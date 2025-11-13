@@ -12,6 +12,7 @@ interface MaintenanceFormData {
   type: '' | 'oil_change' | 'refuel' | 'tune_up';
   cost: string;
   quantity: string;
+  costPerLiter: string;
   notes: string;
 }
 
@@ -58,12 +59,43 @@ export const MaintenanceModal: React.FC<MaintenanceModalProps> = ({
             />
           </View>
 
-          {/* Quantity (show for refuel or oil_change) */}
-          {['refuel', 'oil_change'].includes(formData.type) && (
+          {/* Cost per Liter for refuel */}
+          {formData.type === 'refuel' && (
+            <>
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Cost per Liter (₱)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={formData.costPerLiter}
+                  onChangeText={text => onChange('costPerLiter', text)}
+                  placeholder="Enter cost per liter"
+                />
+              </View>
+
+              {/* Calculated quantity display */}
+              {formData.cost && formData.costPerLiter && 
+               parseFloat(formData.cost) > 0 && 
+               parseFloat(formData.costPerLiter) > 0 && (
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Calculated Quantity (L)</Text>
+                  <View style={styles.calculatedQuantityContainer}>
+                    <Text style={styles.calculatedQuantityText}>
+                      {(parseFloat(formData.cost) / parseFloat(formData.costPerLiter)).toFixed(2)}L
+                    </Text>
+                    <Text style={styles.calculatedQuantitySubtext}>
+                      {formData.cost} ÷ {formData.costPerLiter} = {(parseFloat(formData.cost) / parseFloat(formData.costPerLiter)).toFixed(2)}L
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </>
+          )}
+
+          {/* Quantity for oil_change */}
+          {formData.type === 'oil_change' && (
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>
-                {formData.type === 'refuel' ? 'Fuel Quantity (L)' : 'Oil Quantity (L)'}
-              </Text>
+              <Text style={styles.inputLabel}>Oil Quantity (L)</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="numeric"
@@ -170,5 +202,23 @@ const styles = StyleSheet.create({
   },
   saveButtonText: {
     color: '#fff',
+  },
+  calculatedQuantityContainer: {
+    backgroundColor: '#E8F5E9',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+  },
+  calculatedQuantityText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginBottom: 4,
+  },
+  calculatedQuantitySubtext: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
   },
 });

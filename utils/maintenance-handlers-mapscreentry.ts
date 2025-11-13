@@ -38,11 +38,12 @@ export const saveMaintenanceRecord = async (
     const maintenanceData = {
       motorId,
       userId,
-      actionType,
+      type: actionType, // Changed from actionType to type per API docs
       location: {
-        latitude: location.latitude,
+        lat: location.latitude, // Use lat/lng format per API docs
+        lng: location.longitude,
+        latitude: location.latitude, // Also include latitude/longitude as alternative format
         longitude: location.longitude,
-        address: location.address || 'Unknown location',
       },
       details: {
         cost: parseFloat(formData.cost) || 0,
@@ -52,7 +53,7 @@ export const saveMaintenanceRecord = async (
       timestamp: Date.now(),
     };
 
-    const response = await fetch(`${LOCALHOST_IP}/api/maintenance`, {
+    const response = await fetch(`${LOCALHOST_IP}/api/maintenance-records`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -61,7 +62,13 @@ export const saveMaintenanceRecord = async (
     });
 
     if (!response.ok) {
-      throw new Error('Failed to save maintenance record');
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error('❌ API Error Response:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText,
+      });
+      throw new Error(`Failed to save maintenance record: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();

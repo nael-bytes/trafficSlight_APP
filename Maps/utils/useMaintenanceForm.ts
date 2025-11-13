@@ -139,7 +139,29 @@ export const useMaintenanceForm = ({
 
       if (maintenanceFormData.type === 'refuel') {
         const costPerLiter = parseFloat(maintenanceFormData.costPerLiter) || 0;
+        
+        // Validate cost and costPerLiter before calculating quantity
+        if (cost <= 0) {
+          throw new Error('Cost must be greater than 0');
+        }
+        if (costPerLiter <= 0) {
+          throw new Error('Cost per liter must be greater than 0');
+        }
+        
         const quantity = calculateRefuelQuantity(cost, costPerLiter);
+        
+        // Validate calculated quantity
+        if (!quantity || isNaN(quantity) || quantity <= 0) {
+          throw new Error(`Invalid quantity calculated: ${quantity}. Cost: ${cost}, Cost per liter: ${costPerLiter}`);
+        }
+
+        if (__DEV__) {
+          console.log('[useMaintenanceForm] 🔧 Refuel calculation:', {
+            cost,
+            costPerLiter,
+            calculatedQuantity: quantity,
+          });
+        }
 
         const newFuelLevel = await handleRefuel(
           selectedMotor,

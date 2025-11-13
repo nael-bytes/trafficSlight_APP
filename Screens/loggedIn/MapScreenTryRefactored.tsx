@@ -157,7 +157,7 @@ const MapScreenTryRefactored = memo(function MapScreenTryRefactored({ navigation
         });
       }, {
         priority: 'high',
-        timeout: 15000,
+        timeout: 30000, // Increased to 30s to handle slow networks and Google Maps API delays
         retries: 2,
       });
 

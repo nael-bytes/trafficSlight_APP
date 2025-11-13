@@ -126,8 +126,8 @@ export const useDestinationFlow = (
     });
 
     try {
-      // CRITICAL OPTIMIZATION: Use direct API call with single retry for faster response
-      // Reduced timeout and retries for better user experience
+      // CRITICAL OPTIMIZATION: Use direct API call with retry for reliability
+      // Increased timeout to handle slow networks and Google Maps API response times
       const result = await runAsyncOperation(async () => {
         return await fetchRoutesAsync(mapState.currentLocation!, destination, {
           alternatives: true,
@@ -137,8 +137,8 @@ export const useDestinationFlow = (
         });
       }, {
         priority: 'high', // High priority = runs immediately, no InteractionManager delay
-        timeout: 10000, // Reduced from 15s to 10s for faster failure detection
-        retries: 1, // Reduced from 2 to 1 for faster response (still allows one retry)
+        timeout: 30000, // Increased to 30s to handle slow networks and Google Maps API delays
+        retries: 2, // Allow 2 retries for better reliability on network issues
       });
 
       if (result.success && result.data) {

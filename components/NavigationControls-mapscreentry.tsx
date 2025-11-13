@@ -131,7 +131,12 @@ export const NavigationControls: React.FC<NavigationControlsProps> = ({
           motorId: selectedMotor._id,
           type: actionType,
           timestamp: newAction.timestamp,
-          location: newAction.location,
+          location: {
+            lat: newAction.location.latitude, // Use lat/lng format per API docs
+            lng: newAction.location.longitude,
+            latitude: newAction.location.latitude, // Also include latitude/longitude as alternative format
+            longitude: newAction.location.longitude,
+          },
           details: newAction.details
         })
       });
