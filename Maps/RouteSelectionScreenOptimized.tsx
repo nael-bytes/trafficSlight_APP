@@ -419,7 +419,7 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
         // Show low fuel warning if needed
         if (lowFuelWarning) {
           Toast.show({
-            type: 'warning',
+            type: 'error',
             text1: 'Low Fuel Warning',
             text2: `Fuel level is at ${newFuelLevel.toFixed(1)}%. Please refuel soon.`,
             visibilityTime: 5000,
@@ -2305,7 +2305,7 @@ const RouteSelectionScreen = memo(function RouteSelectionScreen({ navigation, ro
                       
                       if (lowFuelWarning) {
                         Toast.show({
-                          type: 'warning',
+                          type: 'error',
                           text1: 'Low Fuel Warning',
                           text2: `Fuel level is at ${newFuelLevel.toFixed(1)}%. Please refuel soon.`,
                           visibilityTime: 5000,

@@ -809,6 +809,54 @@ export const updateFuelLevel = async (motorId: string, fuelLevel: number) => {
 };
 
 /**
+ * Update fuel level by liters for a motor
+ * Uses: PUT /api/user-motors/:id/fuel/liters
+ * @param motorId - Motor ID
+ * @param liters - Amount of fuel in liters
+ * @returns Promise with updated motor data including conversion details
+ */
+export const updateFuelLevelByLiters = async (motorId: string, liters: number) => {
+  // Validate input parameters
+  if (!motorId || typeof motorId !== 'string') {
+    throw new Error('Invalid motor ID provided');
+  }
+  
+  if (typeof liters !== 'number' || isNaN(liters)) {
+    throw new Error('liters must be a number');
+  }
+  
+  if (liters < 0) {
+    throw new Error('liters cannot be negative');
+  }
+
+  try {
+    const response = await apiRequest(`/api/user-motors/${motorId}/fuel/liters`, {
+      method: 'PUT',
+      body: JSON.stringify({ liters }),
+    });
+    
+    if (__DEV__) {
+      console.log('[API] Fuel level updated by liters successfully:', {
+        motorId,
+        liters,
+        percentage: response?.motor?.fuelLevel?.percentage,
+        actualLiters: response?.motor?.fuelLevel?.liters,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    return response;
+  } catch (error) {
+    console.error('[API] Failed to update fuel level by liters:', {
+      motorId,
+      liters,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
+  }
+};
+
+/**
  * Delete a user motor
  * Uses: DELETE /api/user-motors/:id (as per USER_FRONTEND_IMPLEMENTATION_GUIDE.md)
  * @param motorId - Motor ID to delete

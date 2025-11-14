@@ -645,7 +645,7 @@ export const useTripManagement = ({
               console.error('[useTripManagement] ❌ Failed to restart tracking:', error);
             }
             Toast.show({
-              type: 'warning',
+              type: 'error',
               text1: 'Tracking Restart Failed',
               text2: 'Trip recovered but tracking could not be restarted. Please start manually.',
             });

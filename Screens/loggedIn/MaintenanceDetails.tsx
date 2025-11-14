@@ -362,7 +362,7 @@ export default function MaintenanceDetails() {
       <View style={styles.detailsContainer}>
         {action.details?.cost !== undefined && (
           <View style={styles.detailRow}>
-            <MaterialIcons name="attach-money" size={20} color="#00ADB5" />
+            <Text style={[styles.currencyIcon, isDarkMode && styles.currencyIconDark]}>₱</Text>
             <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
               Cost: ₱{Number(action.details.cost).toFixed(2)}
             </Text>
@@ -380,18 +380,136 @@ export default function MaintenanceDetails() {
 
         {action.details?.costPerLiter !== undefined && action.type === 'refuel' && (
           <View style={styles.detailRow}>
-            <MaterialIcons name="attach-money" size={20} color="#00ADB5" />
+            <Text style={[styles.currencyIcon, isDarkMode && styles.currencyIconDark]}>₱</Text>
             <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
               Price per Liter: ₱{Number(action.details.costPerLiter).toFixed(2)}
             </Text>
           </View>
         )}
 
+        {/* Refuel-specific fields from API Documentation */}
+        {action.type === 'refuel' && (
+          <>
+            {action.details?.fuelTank !== undefined && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="local-gas-station" size={20} color="#00ADB5" />
+                <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+                  Fuel Tank: {Number(action.details.fuelTank).toFixed(1)} L
+                </Text>
+              </View>
+            )}
+            {action.details?.refueledPercent !== undefined && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="trending-up" size={20} color="#00ADB5" />
+                <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+                  Refueled: {Number(action.details.refueledPercent).toFixed(1)}%
+                </Text>
+              </View>
+            )}
+            {action.details?.fuelLevelBefore !== undefined && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="arrow-downward" size={20} color="#00ADB5" />
+                <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+                  Fuel Before: {Number(action.details.fuelLevelBefore).toFixed(0)}%
+                </Text>
+              </View>
+            )}
+            {action.details?.fuelLevelAfter !== undefined && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="arrow-upward" size={20} color="#00ADB5" />
+                <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+                  Fuel After: {Number(action.details.fuelLevelAfter).toFixed(0)}%
+                </Text>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* Oil Change-specific fields from API Documentation */}
+        {action.type === 'oil_change' && (
+          <>
+            {action.details?.oilType && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="opacity" size={20} color="#00ADB5" />
+                <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+                  Oil Type: {action.details.oilType}
+                </Text>
+              </View>
+            )}
+            {action.details?.oilViscosity && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="straighten" size={20} color="#00ADB5" />
+                <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+                  Oil Viscosity: {action.details.oilViscosity}
+                </Text>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* Odometer - applicable to all maintenance types */}
+        {action.odometer !== undefined && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="speed" size={20} color="#00ADB5" />
+            <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+              Odometer: {Number(action.odometer).toLocaleString()} km
+            </Text>
+          </View>
+        )}
+
+        {/* Location - show address if available, otherwise coordinates */}
         {action.location && (
           <View style={styles.detailRow}>
             <MaterialIcons name="location-on" size={20} color="#00ADB5" />
             <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
-              Location: {action.location.latitude.toFixed(6)}, {action.location.longitude.toFixed(6)}
+              {action.location.address 
+                ? `Location: ${action.location.address}`
+                : `Location: ${action.location.latitude.toFixed(6)}, ${action.location.longitude.toFixed(6)}`
+              }
+            </Text>
+          </View>
+        )}
+
+        {/* Service Provider - applicable to all maintenance types */}
+        {action.details?.serviceProvider && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="store" size={20} color="#00ADB5" />
+            <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+              Service Provider: {action.details.serviceProvider}
+            </Text>
+          </View>
+        )}
+
+        {/* Warranty - applicable to oil_change, tune_up, repair, other */}
+        {action.details?.warranty !== undefined && (action.type === 'oil_change' || action.type === 'tune_up' || action.type === 'repair' || action.type === 'other') && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name={action.details.warranty ? "verified" : "info"} size={20} color="#00ADB5" />
+            <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+              Warranty: {action.details.warranty ? "Yes" : "No"}
+            </Text>
+          </View>
+        )}
+
+        {/* Next Service Date - applicable to oil_change, tune_up, repair, other */}
+        {action.details?.nextServiceDate && (action.type === 'oil_change' || action.type === 'tune_up' || action.type === 'repair' || action.type === 'other') && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="event" size={20} color="#00ADB5" />
+            <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+              Next Service Date: {new Date(action.details.nextServiceDate).toLocaleDateString('en-PH', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+              })}
+            </Text>
+          </View>
+        )}
+
+        {/* Next Service Odometer - applicable to oil_change, tune_up, repair, other */}
+        {action.details?.nextServiceOdometer !== undefined && (action.type === 'oil_change' || action.type === 'tune_up' || action.type === 'repair' || action.type === 'other') && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="speed" size={20} color="#00ADB5" />
+            <Text style={[styles.detailText, isDarkMode && styles.detailTextDark]}>
+              Next Service Odometer: {Number(action.details.nextServiceOdometer).toLocaleString()} km
             </Text>
           </View>
         )}
@@ -905,6 +1023,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  currencyIcon: {
+    fontSize: 20,
+    color: '#00ADB5',
+    fontWeight: 'bold',
+    marginRight: 8,
+  },
+  currencyIconDark: {
+    color: '#00ADB5',
   },
   detailText: {
     fontSize: 14,

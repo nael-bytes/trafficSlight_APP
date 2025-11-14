@@ -5,6 +5,7 @@ import {
 import { RouteProp, useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { apiRequest } from '../../utils/api';
+import { getMotorAnalytics } from '../../services/motorService';
 
 type RootStackParamList = {
   MotorDetails: { item: any };
@@ -36,13 +37,27 @@ export default function MotorDetailsScreen({ route }: Props) {
     maintenanceAlerts: [] as string[],
   });
 
-  // Abort controller ref for cleanup
+  // Abort controller refs for cleanup (one per async operation)
   const abortControllerRef = useRef<AbortController | null>(null);
+  const lastRecordsAbortRef = useRef<AbortController | null>(null);
+  const countdownAbortRef = useRef<AbortController | null>(null);
+  const analyticsAbortRef = useRef<AbortController | null>(null);
+  
+  // Mounted ref to prevent state updates after unmount
+  const isMountedRef = useRef(true);
+
+  // Initialize mounted ref
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Fetch trips and maintenance data
   useEffect(() => {
     const fetchMotorData = async () => {
-      if (!item?._id) return;
+      if (!item?._id || !isMountedRef.current) return;
 
       // Abort previous request if still pending
       if (abortControllerRef.current) {
@@ -83,7 +98,7 @@ export default function MotorDetailsScreen({ route }: Props) {
 
       } catch (error: any) {
         // Ignore abort errors
-        if (error?.name === 'AbortError') {
+        if (error?.name === 'AbortError' || !isMountedRef.current) {
           return;
         }
 
@@ -91,11 +106,15 @@ export default function MotorDetailsScreen({ route }: Props) {
           console.error('[MotorDetails] Error fetching motor data:', error);
         }
 
-        // Set empty arrays on error
-        setTrips([]);
-        setMaintenanceRecords([]);
+        // Only update state if component is still mounted
+        if (isMountedRef.current) {
+          setTrips([]);
+          setMaintenanceRecords([]);
+        }
       } finally {
-        setLoading(false);
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
       }
     };
 
@@ -160,29 +179,168 @@ export default function MotorDetailsScreen({ route }: Props) {
     };
   }, [maintenanceRecords, trips]);
 
-  // Fetch analytics from API instead of calculating locally
-  // Uses: GET /api/user-motors/motor-overview/:motorId, /api/fuel-stats/:motorId, /api/maintenance-records/analytics/summary
+  // Fetch last maintenance records from API
+  // Uses: GET /api/maintenance-records/last/:userId
   useEffect(() => {
-    const fetchAnalytics = async () => {
-      if (!item?._id || !item?.userId) return;
+    // Abort previous request if still pending
+    if (lastRecordsAbortRef.current) {
+      lastRecordsAbortRef.current.abort();
+    }
+
+    lastRecordsAbortRef.current = new AbortController();
+    const signal = lastRecordsAbortRef.current.signal;
+
+    const fetchLastMaintenanceRecords = async () => {
+      if (!item?.userId || !isMountedRef.current) return;
 
       try {
-        // Import motor service
-        const { getMotorAnalytics } = await import('../../services/motorService');
+        // Fetch last maintenance records using the API endpoint
+        const lastRecords = await apiRequest(`/api/maintenance-records/last/${item.userId}`, { signal });
+        
+        if (!isMountedRef.current) return;
+
+        if (__DEV__) {
+          console.log('[MotorDetails] Last maintenance records from API:', lastRecords);
+        }
+
+        // Fetch full details for each last record if they exist
+        const fetchFullRecord = async (record: any, type: string) => {
+          if (!record || !record.date || !isMountedRef.current) return null;
+          
+          // Get the most recent record of this type for this motor
+          try {
+            const records = await apiRequest(
+              `/api/maintenance-records/motor/${item._id}?type=${type}&limit=1&sortBy=timestamp&sortOrder=desc`,
+              { signal }
+            );
+            
+            if (!isMountedRef.current) return null;
+            
+            if (records?.records && records.records.length > 0) {
+              return records.records[0];
+            } else if (Array.isArray(records) && records.length > 0) {
+              return records[0];
+            }
+          } catch (error: any) {
+            if (error?.name === 'AbortError' || !isMountedRef.current) return null;
+            if (__DEV__) {
+              console.warn(`[MotorDetails] Failed to fetch full ${type} record:`, error);
+            }
+          }
+          return null;
+        };
+
+        // Fetch full details for last refuel, oil change, and tune-up
+        const [lastRefuelFull, lastOilChangeFull, lastTuneUpFull] = await Promise.all([
+          fetchFullRecord(lastRecords?.lastRefuel, 'refuel'),
+          fetchFullRecord(lastRecords?.lastOilChange, 'oil_change'),
+          fetchFullRecord(lastRecords?.lastTuneUp, 'tune_up'),
+        ]);
+
+        // Only update state if component is still mounted
+        if (isMountedRef.current) {
+          setAnalytics(prev => ({
+            ...prev,
+            lastRefuel: lastRefuelFull && lastRefuelFull.motorId?._id === item._id ? lastRefuelFull : prev.lastRefuel,
+            lastOilChange: lastOilChangeFull && lastOilChangeFull.motorId?._id === item._id ? lastOilChangeFull : prev.lastOilChange,
+            lastTuneUp: lastTuneUpFull && lastTuneUpFull.motorId?._id === item._id ? lastTuneUpFull : prev.lastTuneUp,
+          }));
+        }
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || !isMountedRef.current) return;
+        if (__DEV__) {
+          console.warn('[MotorDetails] Failed to fetch last maintenance records from API:', error);
+        }
+      }
+    };
+
+    fetchLastMaintenanceRecords();
+
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (lastRecordsAbortRef.current) {
+        lastRecordsAbortRef.current.abort();
+        lastRecordsAbortRef.current = null;
+      }
+    };
+  }, [item?._id, item?.userId]);
+
+  // Fetch oil change countdown from API
+  // Uses: GET /api/maintenance-records/oil-change/countdown/:motorId
+  useEffect(() => {
+    // Abort previous request if still pending
+    if (countdownAbortRef.current) {
+      countdownAbortRef.current.abort();
+    }
+
+    countdownAbortRef.current = new AbortController();
+    const signal = countdownAbortRef.current.signal;
+
+    const fetchOilChangeCountdown = async () => {
+      if (!item?._id || !isMountedRef.current) return;
+
+      try {
+        const countdownData = await apiRequest(`/api/maintenance-records/oil-change/countdown/${item._id}`, { signal });
+        
+        if (!isMountedRef.current) return;
+
+        if (__DEV__) {
+          console.log('[MotorDetails] Oil change countdown from API:', countdownData);
+        }
+
+        if (countdownData && isMountedRef.current) {
+          setAnalytics(prev => ({
+            ...prev,
+            kmSinceOilChange: countdownData.kmSinceLastOilChange || prev.kmSinceOilChange,
+            daysSinceOilChange: countdownData.daysSinceLastOilChange || prev.daysSinceOilChange,
+          }));
+        }
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || !isMountedRef.current) return;
+        if (__DEV__) {
+          console.warn('[MotorDetails] Failed to fetch oil change countdown from API:', error);
+        }
+      }
+    };
+
+    fetchOilChangeCountdown();
+
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (countdownAbortRef.current) {
+        countdownAbortRef.current.abort();
+        countdownAbortRef.current = null;
+      }
+    };
+  }, [item?._id]);
+
+  // Memoize maintenance record counts to prevent unnecessary re-fetches
+  const maintenanceCounts = useMemo(() => {
+    const refuels = maintenanceRecords.filter(record => record.type === 'refuel');
+    const oilChanges = maintenanceRecords.filter(record => record.type === 'oil_change');
+    const tuneUps = maintenanceRecords.filter(record => record.type === 'tune_up');
+    return { refuels: refuels.length, oilChanges: oilChanges.length, tuneUps: tuneUps.length };
+  }, [maintenanceRecords.length]); // Only recalculate when length changes
+
+  // Fetch analytics from API for totals and performance metrics
+  // Uses: GET /api/user-motors/motor-overview/:motorId, /api/fuel-stats/:motorId, /api/maintenance-records/analytics/summary
+  useEffect(() => {
+    // Abort previous request if still pending
+    if (analyticsAbortRef.current) {
+      analyticsAbortRef.current.abort();
+    }
+
+    analyticsAbortRef.current = new AbortController();
+    const signal = analyticsAbortRef.current.signal;
+
+    const fetchAnalytics = async () => {
+      if (!item?._id || !item?.userId || !isMountedRef.current) return;
+
+      try {
+        // Get motor analytics for additional metrics
         const analyticsData = await getMotorAnalytics(item._id, item.userId);
 
-        // Use memoized calculations as base
-        const baseAnalytics = calculatedAnalytics || {
-          lastRefuel: null,
-          lastOilChange: null,
-          lastTuneUp: null,
-          kmSinceOilChange: 0,
-          kmSinceTuneUp: 0,
-          daysSinceOilChange: 0,
-          totalRefuels: 0,
-          totalOilChanges: 0,
-          totalTuneUps: 0,
-        };
+        if (!isMountedRef.current) return;
 
         // Generate maintenance alerts from API data
         const alerts: string[] = [];
@@ -199,36 +357,49 @@ export default function MotorDetailsScreen({ route }: Props) {
           }
         });
 
-        setAnalytics({
-          ...baseAnalytics,
-          kmSinceOilChange: analyticsData.overview?.totalDistance || baseAnalytics.kmSinceOilChange,
-          kmSinceTuneUp: analyticsData.overview?.totalDistance || baseAnalytics.kmSinceTuneUp,
-          totalRefuels: analyticsData.maintenance?.byType?.refuel || baseAnalytics.totalRefuels,
-          totalOilChanges: analyticsData.maintenance?.byType?.oil_change || baseAnalytics.totalOilChanges,
-          totalTuneUps: analyticsData.maintenance?.byType?.tune_up || baseAnalytics.totalTuneUps,
-          averageFuelEfficiency: analyticsData.overview?.averageEfficiency || analyticsData.fuelStats?.averageEfficiency || 0,
-          totalFuelConsumed: analyticsData.overview?.totalFuelUsed || analyticsData.fuelStats?.totalLiters || 0,
-          maintenanceAlerts: alerts,
-        });
-      } catch (error) {
+        // Only update state if component is still mounted
+        if (isMountedRef.current) {
+          setAnalytics(prev => ({
+            ...prev,
+            totalRefuels: analyticsData.maintenance?.byType?.refuel || maintenanceCounts.refuels,
+            totalOilChanges: analyticsData.maintenance?.byType?.oil_change || maintenanceCounts.oilChanges,
+            totalTuneUps: analyticsData.maintenance?.byType?.tune_up || maintenanceCounts.tuneUps,
+            averageFuelEfficiency: analyticsData.overview?.averageEfficiency || analyticsData.fuelStats?.averageEfficiency || 0,
+            totalFuelConsumed: analyticsData.overview?.totalFuelUsed || analyticsData.fuelStats?.totalLiters || 0,
+            maintenanceAlerts: alerts,
+          }));
+        }
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || !isMountedRef.current) return;
         if (__DEV__) {
           console.warn('[MotorDetails] Failed to fetch analytics from API, using local calculations:', error);
         }
         
-        // Fallback to memoized local calculation if API fails
-        if (calculatedAnalytics) {
-          setAnalytics({
-            ...calculatedAnalytics,
-            averageFuelEfficiency: 0,
-            totalFuelConsumed: 0,
-            maintenanceAlerts: [],
-        });
+        // Fallback to local calculation if API fails
+        if (isMountedRef.current) {
+          setAnalytics(prev => ({
+            ...prev,
+            totalRefuels: maintenanceCounts.refuels,
+            totalOilChanges: maintenanceCounts.oilChanges,
+            totalTuneUps: maintenanceCounts.tuneUps,
+            averageFuelEfficiency: prev.averageFuelEfficiency || 0,
+            totalFuelConsumed: prev.totalFuelConsumed || 0,
+            maintenanceAlerts: prev.maintenanceAlerts || [],
+          }));
         }
       }
     };
 
     fetchAnalytics();
-  }, [item?._id, item?.userId, calculatedAnalytics]);
+
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (analyticsAbortRef.current) {
+        analyticsAbortRef.current.abort();
+        analyticsAbortRef.current = null;
+      }
+    };
+  }, [item?._id, item?.userId, maintenanceCounts.refuels, maintenanceCounts.oilChanges, maintenanceCounts.tuneUps]);
 
   // Add safety check for item
   if (!item) {
@@ -517,6 +688,57 @@ export default function MotorDetailsScreen({ route }: Props) {
           Quantity: {typeof analytics.lastRefuel?.details?.quantity === "number" ? analytics.lastRefuel.details.quantity.toFixed(2) : "N/A"}L |
           Cost: ₱{analytics.lastRefuel?.details?.cost || "N/A"}
         </Text>
+        
+        {/* Additional Refuel Details from API Documentation */}
+        {analytics.lastRefuel && (
+          <View style={styles.detailsContainer}>
+            {analytics.lastRefuel.details?.costPerLiter && (
+              <Text style={styles.detailText}>
+                💰 Cost per Liter: ₱{Number(analytics.lastRefuel.details.costPerLiter).toFixed(2)}
+              </Text>
+            )}
+            {analytics.lastRefuel.details?.fuelTank && (
+              <Text style={styles.detailText}>
+                ⛽ Fuel Tank: {analytics.lastRefuel.details.fuelTank}L
+              </Text>
+            )}
+            {analytics.lastRefuel.details?.refueledPercent && (
+              <Text style={styles.detailText}>
+                📊 Refueled: {analytics.lastRefuel.details.refueledPercent.toFixed(1)}%
+              </Text>
+            )}
+            {analytics.lastRefuel.details?.fuelLevelBefore !== undefined && (
+              <Text style={styles.detailText}>
+                📉 Fuel Before: {analytics.lastRefuel.details.fuelLevelBefore.toFixed(0)}%
+              </Text>
+            )}
+            {analytics.lastRefuel.details?.fuelLevelAfter !== undefined && (
+              <Text style={styles.detailText}>
+                📈 Fuel After: {analytics.lastRefuel.details.fuelLevelAfter.toFixed(0)}%
+              </Text>
+            )}
+            {analytics.lastRefuel.odometer && (
+              <Text style={styles.detailText}>
+                🛣️ Odometer: {analytics.lastRefuel.odometer.toLocaleString()} km
+              </Text>
+            )}
+            {analytics.lastRefuel.location?.address && (
+              <Text style={styles.detailText}>
+                📍 Location: {analytics.lastRefuel.location.address}
+              </Text>
+            )}
+            {analytics.lastRefuel.details?.serviceProvider && (
+              <Text style={styles.detailText}>
+                🏪 Service Provider: {analytics.lastRefuel.details.serviceProvider}
+              </Text>
+            )}
+            {analytics.lastRefuel.details?.notes && (
+              <Text style={styles.detailText}>
+                📝 Notes: {analytics.lastRefuel.details.notes}
+              </Text>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Last Oil Change */}
@@ -542,6 +764,61 @@ export default function MotorDetailsScreen({ route }: Props) {
           KM Since Last Change: {analytics.kmSinceOilChange.toFixed(0)}km |
           Quantity: {analytics.lastOilChange?.details?.quantity || "N/A"}L
         </Text>
+        
+        {/* Additional Oil Change Details from API Documentation */}
+        {analytics.lastOilChange && (
+          <View style={styles.detailsContainer}>
+            {analytics.lastOilChange.details?.oilType && (
+              <Text style={styles.detailText}>
+                🛢️ Oil Type: {analytics.lastOilChange.details.oilType}
+              </Text>
+            )}
+            {analytics.lastOilChange.details?.oilViscosity && (
+              <Text style={styles.detailText}>
+                📏 Oil Viscosity: {analytics.lastOilChange.details.oilViscosity}
+              </Text>
+            )}
+            {analytics.lastOilChange.odometer && (
+              <Text style={styles.detailText}>
+                🛣️ Odometer: {analytics.lastOilChange.odometer.toLocaleString()} km
+              </Text>
+            )}
+            {analytics.lastOilChange.location?.address && (
+              <Text style={styles.detailText}>
+                📍 Location: {analytics.lastOilChange.location.address}
+              </Text>
+            )}
+            {analytics.lastOilChange.details?.serviceProvider && (
+              <Text style={styles.detailText}>
+                🏪 Service Provider: {analytics.lastOilChange.details.serviceProvider}
+              </Text>
+            )}
+            {analytics.lastOilChange.details?.warranty !== undefined && (
+              <Text style={styles.detailText}>
+                🛡️ Warranty: {analytics.lastOilChange.details.warranty ? "Yes" : "No"}
+              </Text>
+            )}
+            {analytics.lastOilChange.details?.nextServiceDate && (
+              <Text style={styles.detailText}>
+                📅 Next Service Date: {new Date(analytics.lastOilChange.details.nextServiceDate).toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "2-digit",
+                })}
+              </Text>
+            )}
+            {analytics.lastOilChange.details?.nextServiceOdometer && (
+              <Text style={styles.detailText}>
+                🛣️ Next Service Odometer: {analytics.lastOilChange.details.nextServiceOdometer.toLocaleString()} km
+              </Text>
+            )}
+            {analytics.lastOilChange.details?.notes && (
+              <Text style={styles.detailText}>
+                📝 Notes: {analytics.lastOilChange.details.notes}
+              </Text>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Oil Change Countdown */}
@@ -639,6 +916,51 @@ export default function MotorDetailsScreen({ route }: Props) {
           KM Since Last Tune Up: {analytics.kmSinceTuneUp.toFixed(0)}km |
           Cost: ₱{analytics.lastTuneUp?.details?.cost || "N/A"}
         </Text>
+        
+        {/* Additional Tune Up Details from API Documentation */}
+        {analytics.lastTuneUp && (
+          <View style={styles.detailsContainer}>
+            {analytics.lastTuneUp.odometer && (
+              <Text style={styles.detailText}>
+                🛣️ Odometer: {analytics.lastTuneUp.odometer.toLocaleString()} km
+              </Text>
+            )}
+            {analytics.lastTuneUp.location?.address && (
+              <Text style={styles.detailText}>
+                📍 Location: {analytics.lastTuneUp.location.address}
+              </Text>
+            )}
+            {analytics.lastTuneUp.details?.serviceProvider && (
+              <Text style={styles.detailText}>
+                🏪 Service Provider: {analytics.lastTuneUp.details.serviceProvider}
+              </Text>
+            )}
+            {analytics.lastTuneUp.details?.warranty !== undefined && (
+              <Text style={styles.detailText}>
+                🛡️ Warranty: {analytics.lastTuneUp.details.warranty ? "Yes" : "No"}
+              </Text>
+            )}
+            {analytics.lastTuneUp.details?.nextServiceDate && (
+              <Text style={styles.detailText}>
+                📅 Next Service Date: {new Date(analytics.lastTuneUp.details.nextServiceDate).toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "2-digit",
+                })}
+              </Text>
+            )}
+            {analytics.lastTuneUp.details?.nextServiceOdometer && (
+              <Text style={styles.detailText}>
+                🛣️ Next Service Odometer: {analytics.lastTuneUp.details.nextServiceOdometer.toLocaleString()} km
+              </Text>
+            )}
+            {analytics.lastTuneUp.details?.notes && (
+              <Text style={styles.detailText}>
+                📝 Notes: {analytics.lastTuneUp.details.notes}
+              </Text>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Performance Analytics */}
@@ -685,33 +1007,35 @@ export default function MotorDetailsScreen({ route }: Props) {
 
       {/* Timestamps */}
       <Text style={styles.sectionTitle}>Timestamps</Text>
-      {["createdAt", "updatedAt"].map(field => {
-        const rawDate = formData[field];
-        let formattedDate = "";
-        if (rawDate) {
-          const dateObj = new Date(rawDate);
-          formattedDate = dateObj.toLocaleString("en-US", {
-            year: "numeric",
-            month: "short",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: true,
-          });
-        }
+      {useMemo(() => {
+        return ["createdAt", "updatedAt"].map(field => {
+          const rawDate = formData[field];
+          let formattedDate = "";
+          if (rawDate) {
+            const dateObj = new Date(rawDate);
+            formattedDate = dateObj.toLocaleString("en-US", {
+              year: "numeric",
+              month: "short",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              hour12: true,
+            });
+          }
 
-        return (
-          <View style={styles.section} key={field}>
-            <Text style={styles.label}>{fieldTitles[field]}</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: "#EEE" }]}
-              value={formattedDate}
-              editable={false}
-            />
-          </View>
-        );
-      })}
+          return (
+            <View style={styles.section} key={field}>
+              <Text style={styles.label}>{fieldTitles[field]}</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: "#EEE" }]}
+                value={formattedDate}
+                editable={false}
+              />
+            </View>
+          );
+        });
+      }, [formData.createdAt, formData.updatedAt])}
 
 
       {/* Save Button */}
@@ -777,5 +1101,17 @@ const styles = StyleSheet.create({
     fontSize: 14, 
     fontWeight: "600", 
     textAlign: "center" 
+  },
+  detailsContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#E0E0E0",
+  },
+  detailText: {
+    fontSize: 13,
+    color: "#666",
+    marginBottom: 6,
+    lineHeight: 20,
   },
 });

@@ -249,6 +249,8 @@ const UserLocationMarker = React.memo<{
   currentLocation: LocationCoords;
   snappedRouteCoordinates: LocationCoords[];
 }>(({ currentLocation, snappedRouteCoordinates }) => {
+  // CRITICAL: Always show marker when location is available (even when idle/AFK)
+  // App always watches user location, so marker should always be visible
   if (!currentLocation || !validateCoordinates(currentLocation)) return null;
   
   // Always create a new coordinate object to ensure Marker detects changes
@@ -268,6 +270,8 @@ const UserLocationMarker = React.memo<{
       title="Your Location"
       tracksViewChanges={false}
       anchor={{ x: 0.5, y: 1 }}
+      // CRITICAL: Always visible when location is available
+      zIndex={1000} // Ensure user marker is always on top
     >
       <View style={{ width: 40, height: 40, justifyContent: 'center', alignItems: 'center' }}>
       <Image 
@@ -1511,6 +1515,37 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     }
   }, [onReportVoted]);
 
+  // Update selectedReport when reportMarkers are refreshed (e.g., after voting)
+  // This ensures the selected report shows the latest vote count from backend
+  useEffect(() => {
+    if (state.selectedReport && reportMarkers) {
+      // Find the updated report in the fresh reportMarkers
+      const updatedReport = reportMarkers.find((r: any) => r._id === state.selectedReport?._id);
+      
+      if (updatedReport) {
+        // Check if votes have changed
+        const currentVoteCount = state.selectedReport.votes?.reduce((sum: number, v: any) => sum + (v.vote || 0), 0) || 0;
+        const updatedVoteCount = updatedReport.votes?.reduce((sum: number, v: any) => sum + (v.vote || 0), 0) || 0;
+        
+        if (currentVoteCount !== updatedVoteCount) {
+          if (__DEV__) {
+            console.log('[OptimizedMapComponent] ✅ Updating selectedReport with fresh data from backend', {
+              reportId: state.selectedReport._id,
+              oldVoteCount: currentVoteCount,
+              newVoteCount: updatedVoteCount,
+            });
+          }
+          
+          // Update selectedReport with fresh data from backend
+          setState(prev => ({
+            ...prev,
+            selectedReport: updatedReport,
+          }));
+        }
+      }
+    }
+  }, [reportMarkers, state.selectedReport?._id]);
+
   const closeSelection = useCallback(() => {
     try {
       console.log('[OptimizedMapComponent] Closing selection');
@@ -1758,6 +1793,24 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
     }
   }, [adjustedRegion, mapRef, defaultRegion, isFocused, isMapSelectionMode, mapCenterCoordinate]);
 
+  // CRITICAL: Log destination marker visibility for debugging
+  // This helps verify that destination marker is always visible when destination is set
+  useEffect(() => {
+    if (__DEV__) {
+      const shouldShow = !!(destination && !isMapSelectionMode);
+      console.log('[OptimizedMapComponent] 🎯 Destination marker visibility check:', {
+        hasDestination: !!destination,
+        destinationCoords: destination ? {
+          lat: destination.latitude || destination.lat,
+          lng: destination.longitude || destination.lng || destination.lon,
+        } : null,
+        isMapSelectionMode,
+        shouldShow,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }, [destination, isMapSelectionMode]);
+
   // CRITICAL FIX: Ensure region is always valid before passing to MapView
   // This prevents "Cannot read property 'latitude' of undefined" errors
   // Must be calculated inline to catch edge cases during unmount/remount
@@ -1945,7 +1998,8 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
         customMapStyle={flatBuildingsMapStyle} // Apply custom style to disable 3D buildings
         {...cameraProps} // Apply camera props for pitch
       >
-        {/* User location marker - Use custom image marker */}
+        {/* User location marker - ALWAYS show when location is available (even when idle/AFK) */}
+        {/* CRITICAL: App always watches user location, so marker should always be visible */}
         {currentLocation && 
          typeof currentLocation.latitude === 'number' && 
          typeof currentLocation.longitude === 'number' &&
@@ -1962,8 +2016,10 @@ export const OptimizedMapComponent: React.FC<MapComponentProps> = memo(({
         )}
 
 
-        {/* Destination marker - Only show when NOT in map selection mode */}
-        {!isMapSelectionMode && <DestinationMarker destination={destination} />}
+        {/* Destination marker - Show when destination is set AND not actively in map selection mode */}
+        {/* CRITICAL: Always show destination marker when destination exists, regardless of selection method */}
+        {/* Only hide during active map selection (when user is choosing from map) */}
+        {destination && !isMapSelectionMode && <DestinationMarker destination={destination} />}
 
         {/* Center destination marker - Only show when in map selection mode */}
         {/* This marker is always at the center of the map view */}

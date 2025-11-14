@@ -308,25 +308,24 @@ export const handleLowFuelConfirmation = async (params: FuelCheckParams): Promis
       }
     }
 
-    // Show warning first
+    // Show warning first (non-blocking)
     Toast.show({
       type: 'error',
       text1: 'Low Fuel Warning',
       text2: `Fuel is at ${currentFuelLevel.toFixed(0)}%. Please refuel soon.`,
       position: 'top',
-      visibilityTime: 4000,
+      visibilityTime: 3000, // Reduced from 4000ms to 3000ms
     });
     
-    // CRITICAL: Don't close modal until tracking starts successfully
-    // Small delay to ensure toast is shown before starting tracking
-    setTimeout(async () => {
-      try {
-        // Proceed with travel
-        await onStartTracking();
-        // Only close modal if tracking started successfully
-        onHideFuelCheckModal();
-        onSetFuelCheckStep(null);
-      } catch (error: any) {
+    // CRITICAL FIX: Start tracking immediately without delay
+    // Toast will show in background, tracking starts right away
+    try {
+      // Proceed with travel immediately
+      await onStartTracking();
+      // Only close modal if tracking started successfully
+      onHideFuelCheckModal();
+      onSetFuelCheckStep(null);
+    } catch (error: any) {
         console.error('[FuelCheck] ❌ Error proceeding with travel after low fuel confirmation:', error);
         console.error('[FuelCheck] Error details:', {
           message: error?.message,
@@ -372,7 +371,6 @@ export const handleLowFuelConfirmation = async (params: FuelCheckParams): Promis
         // Modal will stay visible so user can retry after fixing the issue
         console.log('[FuelCheck] Modal kept open - user can retry after fixing the issue');
       }
-    }, 100);
   } else {
     // Low fuel needs updating
     onHideFuelCheckModal();

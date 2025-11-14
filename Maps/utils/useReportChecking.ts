@@ -103,12 +103,16 @@ export const useReportChecking = ({
 
   // Optimized refresh function - only updates markers, not the entire map
   // This is called when a report is voted on, but we only want to update markers
-  // SILENT UPDATE: Refreshes happen silently in background - no logs unless errors
+  // CRITICAL: Fetches fresh data from backend to get updated vote counts
   const memoizedRefreshData = useCallback(async () => {
     // Only refresh reports (markers), not the entire map
     // This prevents full map re-renders when voting on reports
     // The OptimizedMapComponent will handle marker updates internally via React.memo
     if (isFocused && user?._id && !isCheckingReports) {
+      if (__DEV__) {
+        console.log('[useReportChecking] 🔄 Refreshing reports after vote to get updated data from backend');
+      }
+
       // Trigger a report check (debounced) to update markers only
       // This will update markers without causing full map re-render
       // Updates happen silently in background
@@ -126,7 +130,7 @@ export const useReportChecking = ({
             }
           });
         }
-      }, 1000); // 1 second delay to batch updates
+      }, 500); // Reduced to 500ms for faster update after voting
     }
   }, [isFocused, user?._id, isCheckingReports, checkReportUpdates]);
 

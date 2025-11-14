@@ -151,7 +151,7 @@ function MainApp() {
         }
         
         if (__DEV__) {
-          console.error('App-level error:', error, errorInfo);
+        console.error('App-level error:', error, errorInfo);
         }
         // Here you could send error reports to a crash reporting service
       }}
@@ -292,7 +292,7 @@ export default function App() {
         }
         
         if (__DEV__) {
-          console.error('Critical app error:', error, errorInfo);
+        console.error('Critical app error:', error, errorInfo);
         }
         // Critical error handling - could trigger app restart or crash reporting
       }}

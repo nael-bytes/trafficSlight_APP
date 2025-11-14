@@ -468,7 +468,7 @@ export default function TripScreen({ navigation }) {
               <Text style={styles.summaryLabel}>Total Time</Text>
             </View>
             <View style={[styles.summaryBox, styles.summaryBoxWide]}>
-              <Ionicons name="cash-outline" size={24} color="#00ADB5" />
+              <Text style={styles.currencyIcon}>₱</Text>
               <Text style={styles.summaryValue}>₱{summary.totalExpense.toFixed(2)}</Text>
               <Text style={styles.summaryLabel}>Total Cost</Text>
             </View> */}
@@ -625,6 +625,12 @@ const styles = StyleSheet.create({
   summaryBoxWide: {
     flex: 2,
     marginHorizontal: 4,
+  },
+  currencyIcon: {
+    fontSize: 24,
+    color: '#00ADB5',
+    fontWeight: 'bold',
+    marginBottom: 4,
   },
   summaryValue: {
     fontSize: 18,

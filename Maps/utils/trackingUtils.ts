@@ -183,15 +183,23 @@ export const startFreeDriveTracking = async (params: StartTrackingParams): Promi
     }
     onSetScreenMode('tracking');
     
-    // Get start address
+    // CRITICAL FIX: Get start address in background (non-blocking)
+    // Don't wait for geocoding - start tracking immediately and update address when ready
     if (currentLocation) {
-      try {
-        const address = await reverseGeocodeLocation(currentLocation);
-        onSetStartAddress(address);
-      } catch (error) {
-        console.warn('[TrackingUtils] Failed to get start address:', error);
-        onSetStartAddress('Unknown Location');
-      }
+      // Start geocoding in background without blocking
+      reverseGeocodeLocation(currentLocation)
+        .then((address) => {
+          onSetStartAddress(address);
+          if (__DEV__) {
+            console.log('[TrackingUtils] ✅ Start address obtained in background:', address);
+          }
+        })
+        .catch((error) => {
+          console.warn('[TrackingUtils] Failed to get start address:', error);
+          onSetStartAddress('Unknown Location');
+        });
+      // Set temporary address immediately so UI doesn't wait
+      onSetStartAddress('Getting address...');
     }
   } catch (error: any) {
     Toast.show({

@@ -342,7 +342,7 @@ export default function FuelCalculatorScreen() {
 
             <View style={styles.resultRow}>
               <View style={styles.resultItem}>
-                <Ionicons name="cash" size={20} color="#00ADB5" />
+                <Text style={styles.currencyIcon}>₱</Text>
                 <Text style={styles.resultLabel}>Total Fuel Cost</Text>
                 <Text style={styles.resultValue}>₱{fuelCost.toFixed(2)}</Text>
               </View>
@@ -603,6 +603,12 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: '#F8F9FA',
     borderRadius: 12,
+  },
+  currencyIcon: {
+    fontSize: 20,
+    color: '#00ADB5',
+    fontWeight: 'bold',
+    marginRight: 8,
   },
   resultLabel: {
     fontSize: 14,

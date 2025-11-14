@@ -22,6 +22,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { useUser } from "../../AuthContext/UserContextImproved";
 import { LOCALHOST_IP } from "@env";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { apiRequest, updateFuelLevelByLiters } from "../../utils/api";
 
 export default function AddFuelLogScreen() {
   const navigation = useNavigation();
@@ -35,7 +36,7 @@ export default function AddFuelLogScreen() {
 
   const [formData, setFormData] = useState({
     date: new Date(),
-    liters: "",
+    totalCost: "",
     pricePerLiter: "",
     odometer: "",
     notes: "",
@@ -76,11 +77,12 @@ export default function AddFuelLogScreen() {
 
   const validateForm = () => {
     if (!selectedMotor) return "Please select a motor";
-    if (!formData.liters || isNaN(Number(formData.liters)))
-      return "Enter a valid number of liters";
-    if (!formData.pricePerLiter || isNaN(Number(formData.pricePerLiter)))
+    if (!formData.totalCost || isNaN(Number(formData.totalCost)) || Number(formData.totalCost) <= 0)
+      return "Enter a valid total cost";
+    if (!formData.pricePerLiter || isNaN(Number(formData.pricePerLiter)) || Number(formData.pricePerLiter) <= 0)
       return "Enter a valid price per liter";
-    if (!formData.odometer || isNaN(Number(formData.odometer)))
+    // Odometer is now optional - only validate if provided
+    if (formData.odometer && (isNaN(Number(formData.odometer)) || Number(formData.odometer) < 0))
       return "Enter a valid odometer reading";
     return null;
   };
@@ -94,59 +96,85 @@ export default function AddFuelLogScreen() {
 
     setIsSubmitting(true);
     try {
-      const payload = {
+      // Calculate liters from total cost and price per liter
+      const totalCost = Number(formData.totalCost);
+      const pricePerLiter = Number(formData.pricePerLiter);
+      const liters = totalCost / pricePerLiter;
+
+      const payload: any = {
         userId: user._id,
         motorId: selectedMotor._id,
         date: formData.date,
-        liters: Number(formData.liters),
-        pricePerLiter: Number(formData.pricePerLiter),
-        totalCost: Number(formData.liters) * Number(formData.pricePerLiter),
-        odometer: Number(formData.odometer),
-        notes: formData.notes,
+        liters: liters,
+        pricePerLiter: pricePerLiter,
+        totalCost: totalCost,
+        notes: formData.notes || "",
       };
 
-      const res = await fetch(`${LOCALHOST_IP}/api/fuel-logs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      // Odometer is optional - only include if provided
+      if (formData.odometer && !isNaN(Number(formData.odometer))) {
+        payload.odometer = Number(formData.odometer);
+      }
+
+      // Use apiRequest utility for consistent authentication and error handling
+      await apiRequest('/api/fuel-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      console.log(selectedMotor.currentFuelLevel, (Number(formData.liters)), selectedMotor.motorcycleId.fuelTank);
-      const newFuel = selectedMotor.currentFuelLevel + ((Number(formData.liters)/selectedMotor.motorcycleId?.fuelTank) * 100);
-      updateFuelLevel(selectedMotor._id,newFuel);
-      console.log("newFuel:" ,newFuel);
-      if (!res.ok) throw new Error("Failed to save fuel log");
+
+      // Update fuel level using the liters endpoint (automatically converts to percentage)
+      // This endpoint handles overflow, conversion, and calculates all derived values
+      // Note: The endpoint sets fuel level TO the provided liters, so we need to calculate
+      // the total liters (current + added) before calling it
+      if (liters > 0 && selectedMotor.motorcycleId?.fuelTank) {
+        try {
+          // Calculate current fuel in liters
+          const currentFuelPercentage = selectedMotor.currentFuelLevel || 0;
+          const fuelTankCapacity = selectedMotor.motorcycleId.fuelTank;
+          const currentFuelInLiters = (currentFuelPercentage / 100) * fuelTankCapacity;
+          
+          // Calculate total fuel after adding the refueled liters
+          const totalFuelInLiters = currentFuelInLiters + liters;
+          
+          // Call the endpoint with total liters (it will clamp to tank capacity if overflow)
+          const fuelUpdateResult = await updateFuelLevelByLiters(selectedMotor._id, totalFuelInLiters);
+          if (__DEV__) {
+            console.log('[AddFuelLog] Fuel level updated by liters:', {
+              motorId: selectedMotor._id,
+              litersAdded: liters,
+              currentFuelInLiters: currentFuelInLiters.toFixed(2),
+              totalFuelInLiters: totalFuelInLiters.toFixed(2),
+              oldLevel: selectedMotor.currentFuelLevel,
+              newLevel: fuelUpdateResult?.motor?.fuelLevel?.percentage,
+              actualLiters: fuelUpdateResult?.motor?.fuelLevel?.liters,
+              fuelTankCapacity: fuelUpdateResult?.motor?.fuelLevel?.fuelTankCapacity,
+              overflow: fuelUpdateResult?.conversion?.overflow,
+            });
+          }
+        } catch (fuelError: any) {
+          // Log error but don't fail the entire operation
+          // The fuel log was saved successfully, fuel level update is secondary
+          console.warn('[AddFuelLog] Failed to update fuel level (fuel log was saved):', fuelError?.message || fuelError);
+        }
+      } else if (liters > 0 && !selectedMotor.motorcycleId?.fuelTank) {
+        // Warn if fuel tank capacity is not set
+        console.warn('[AddFuelLog] Cannot update fuel level: fuel tank capacity not set for motor');
+      }
 
       await fetchUserMotors(); // refresh cache
 
       Alert.alert("✅ Success", "Fuel log added successfully!");
       navigation.goBack();
-    } catch (err) {
+    } catch (err: any) {
       console.error("❌ handleSave error:", err);
-      Alert.alert("Error", "Failed to save fuel log. Please try again.");
+      const errorMessage = err?.message || "Failed to save fuel log. Please try again.";
+      Alert.alert("Error", errorMessage);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const updateFuelLevel = async (motorId: string, newFuelLevel: number) => {
-    try {
-      const response = await fetch(`${LOCALHOST_IP}/api/user-motors/${motorId}/fuel`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentFuelLevel: newFuelLevel }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to update fuel level: ${response.status} ${errorText}`);
-      }
-
-      const updatedMotor = await response.json();
-      console.log("✅ Fuel level updated:", updatedMotor);
-    } catch (error: any) {
-      console.error("❌ Error in updateFuelLevel:", error);
-    }
-  };
 
   return (
     <Modal
@@ -209,26 +237,57 @@ export default function AddFuelLogScreen() {
               <Ionicons name="calendar" size={20} color="#00ADB5" />
             </TouchableOpacity>
 
-            {/* Form Inputs */}
-            {["liters", "pricePerLiter", "odometer"].map((field, idx) => (
-              <View style={styles.inputGroup} key={idx}>
-                <Text style={styles.label}>
-                  {field === "liters"
-                    ? "Liters"
-                    : field === "pricePerLiter"
-                    ? "Price per Liter"
-                    : "Odometer Reading"}
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData[field]}
-                  onChangeText={(value) => handleFormChange(field, value)}
-                  keyboardType={field === "odometer" ? "numeric" : "decimal-pad"}
-                  placeholder={`Enter ${field}`}
-                  placeholderTextColor="#999"
-                />
-              </View>
-            ))}
+            {/* Total Cost */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Total Cost (₱)</Text>
+              <TextInput
+                style={styles.input}
+                value={formData.totalCost}
+                onChangeText={(value) => handleFormChange("totalCost", value)}
+                keyboardType="decimal-pad"
+                placeholder="Enter total cost"
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            {/* Price per Liter */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Price per Liter (₱)</Text>
+              <TextInput
+                style={styles.input}
+                value={formData.pricePerLiter}
+                onChangeText={(value) => handleFormChange("pricePerLiter", value)}
+                keyboardType="decimal-pad"
+                placeholder="Enter price per liter"
+                placeholderTextColor="#999"
+              />
+              {(() => {
+                const totalCostNum = Number(formData.totalCost);
+                const pricePerLiterNum = Number(formData.pricePerLiter);
+                const isValid = formData.totalCost && formData.pricePerLiter && 
+                               !isNaN(totalCostNum) && 
+                               !isNaN(pricePerLiterNum) && 
+                               pricePerLiterNum > 0;
+                return isValid ? (
+                  <Text style={styles.calculatedText}>
+                    Quantity: {(totalCostNum / pricePerLiterNum).toFixed(2)} L
+                  </Text>
+                ) : null;
+              })()}
+            </View>
+
+            {/* Odometer Reading (Optional) */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Odometer Reading (Optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={formData.odometer}
+                onChangeText={(value) => handleFormChange("odometer", value)}
+                keyboardType="numeric"
+                placeholder="Enter odometer reading (optional)"
+                placeholderTextColor="#999"
+              />
+            </View>
 
             {/* Notes */}
             <View style={styles.inputGroup}>
@@ -353,6 +412,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#333",
     elevation: 3,
+  },
+  calculatedText: {
+    fontSize: 12,
+    color: "#00ADB5",
+    marginTop: 4,
+    fontStyle: "italic",
   },
   textArea: { height: 100, textAlignVertical: "top" },
   saveButton: {
