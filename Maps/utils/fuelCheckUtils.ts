@@ -319,13 +319,13 @@ export const handleLowFuelConfirmation = async (params: FuelCheckParams): Promis
     
     // CRITICAL FIX: Start tracking immediately without delay
     // Toast will show in background, tracking starts right away
-    try {
+      try {
       // Proceed with travel immediately
-      await onStartTracking();
-      // Only close modal if tracking started successfully
-      onHideFuelCheckModal();
-      onSetFuelCheckStep(null);
-    } catch (error: any) {
+        await onStartTracking();
+        // Only close modal if tracking started successfully
+        onHideFuelCheckModal();
+        onSetFuelCheckStep(null);
+      } catch (error: any) {
         console.error('[FuelCheck] ❌ Error proceeding with travel after low fuel confirmation:', error);
         console.error('[FuelCheck] Error details:', {
           message: error?.message,

@@ -189,14 +189,14 @@ export const startFreeDriveTracking = async (params: StartTrackingParams): Promi
       // Start geocoding in background without blocking
       reverseGeocodeLocation(currentLocation)
         .then((address) => {
-          onSetStartAddress(address);
+        onSetStartAddress(address);
           if (__DEV__) {
             console.log('[TrackingUtils] ✅ Start address obtained in background:', address);
           }
         })
         .catch((error) => {
-          console.warn('[TrackingUtils] Failed to get start address:', error);
-          onSetStartAddress('Unknown Location');
+        console.warn('[TrackingUtils] Failed to get start address:', error);
+        onSetStartAddress('Unknown Location');
         });
       // Set temporary address immediately so UI doesn't wait
       onSetStartAddress('Getting address...');

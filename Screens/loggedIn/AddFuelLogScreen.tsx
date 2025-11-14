@@ -48,25 +48,68 @@ export default function AddFuelLogScreen() {
   }, [user]);
 
   const fetchUserMotors = async () => {
-    if (!user?._id) return;
+    if (!user?._id) {
+      console.log('[AddFuelLog] ⏭️ fetchUserMotors skipped: no user ID');
+      return;
+    }
+    
     const cacheKey = `cachedMotors_${user._id}`;
+    console.log('[AddFuelLog] 🔄 fetchUserMotors called:', {
+      userId: user._id,
+      cacheKey,
+    });
 
     try {
       // ✅ Load from cache first
       const cached = await AsyncStorage.getItem(cacheKey);
-      if (cached) setMotors(JSON.parse(cached));
+      if (cached) {
+        const parsedCached = JSON.parse(cached);
+        console.log('[AddFuelLog] 📦 Loaded from cache:', {
+          motorsCount: parsedCached.length,
+          motors: parsedCached.map((m: any) => ({
+            id: m._id,
+            nickname: m.nickname,
+            fuelLevel: m.currentFuelLevel,
+          })),
+        });
+        setMotors(parsedCached);
+      } else {
+        console.log('[AddFuelLog] 📦 No cached motors found');
+      }
 
       // ✅ Fetch fresh data
-      const res = await fetch(`${LOCALHOST_IP}/api/user-motors/user/${user._id}`);
-      if (!res.ok) throw new Error("Failed to fetch motors from API");
+      const endpoint = `${LOCALHOST_IP}/api/user-motors/user/${user._id}`;
+      console.log('[AddFuelLog] 📤 Fetching motors from API:', { endpoint });
+      
+      const res = await fetch(endpoint);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch motors from API: ${res.status} ${res.statusText}`);
+      }
 
       const data = await res.json();
+      console.log('[AddFuelLog] 📥 Motors fetched from API:', {
+        motorsCount: Array.isArray(data) ? data.length : 'unknown',
+        motors: Array.isArray(data) ? data.map((m: any) => ({
+          id: m._id,
+          nickname: m.nickname,
+          fuelLevel: m.currentFuelLevel,
+        })) : 'not an array',
+        dataType: Array.isArray(data) ? 'array' : typeof data,
+      });
+      
       setMotors(data);
 
       // ✅ Update cache
       await AsyncStorage.setItem(cacheKey, JSON.stringify(data));
-    } catch (err) {
-      console.error("❌ fetchUserMotors error:", err);
+      console.log('[AddFuelLog] ✅ Cache updated with fresh motors data');
+    } catch (err: any) {
+      console.error('[AddFuelLog] ❌ fetchUserMotors error:', {
+        error: err,
+        message: err?.message,
+        stack: err?.stack,
+        userId: user?._id,
+        timestamp: new Date().toISOString(),
+      });
       Alert.alert("Error", "Failed to load your motors. Please try again.");
     }
   };
@@ -88,18 +131,43 @@ export default function AddFuelLogScreen() {
   };
 
   const handleSave = async () => {
+    console.log('[AddFuelLog] 🚀 handleSave called');
+    console.log('[AddFuelLog] Form data:', {
+      totalCost: formData.totalCost,
+      pricePerLiter: formData.pricePerLiter,
+      odometer: formData.odometer,
+      date: formData.date,
+      notes: formData.notes,
+      selectedMotor: selectedMotor?._id || 'none',
+      userId: user?._id || 'none',
+    });
+
     const errorMsg = validateForm();
     if (errorMsg || !user?._id) {
+      console.log('[AddFuelLog] ❌ Validation failed:', {
+        errorMsg,
+        hasUser: !!user?._id,
+      });
       if (errorMsg) Alert.alert("Error", errorMsg);
       return;
     }
 
+    console.log('[AddFuelLog] ✅ Validation passed');
     setIsSubmitting(true);
+    
     try {
       // Calculate liters from total cost and price per liter
       const totalCost = Number(formData.totalCost);
       const pricePerLiter = Number(formData.pricePerLiter);
       const liters = totalCost / pricePerLiter;
+      
+      console.log('[AddFuelLog] 📊 Calculated values:', {
+        totalCost,
+        pricePerLiter,
+        liters: liters.toFixed(2),
+        selectedMotorFuelLevel: selectedMotor?.currentFuelLevel,
+        fuelTankCapacity: selectedMotor?.motorcycleId?.fuelTank,
+      });
 
       const payload: any = {
         userId: user._id,
@@ -116,17 +184,40 @@ export default function AddFuelLogScreen() {
         payload.odometer = Number(formData.odometer);
       }
 
+      console.log('[AddFuelLog] 📤 Saving fuel log to backend:', {
+        endpoint: '/api/fuel-logs',
+        payload: {
+          ...payload,
+          date: payload.date instanceof Date ? payload.date.toISOString() : payload.date,
+        },
+      });
+
       // Use apiRequest utility for consistent authentication and error handling
-      await apiRequest('/api/fuel-logs', {
+      const fuelLogResponse = await apiRequest('/api/fuel-logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+      });
+      
+      console.log('[AddFuelLog] ✅ Fuel log saved successfully:', {
+        response: fuelLogResponse,
+        timestamp: new Date().toISOString(),
       });
 
       // Update fuel level using the liters endpoint (automatically converts to percentage)
       // This endpoint handles overflow, conversion, and calculates all derived values
       // Note: The endpoint sets fuel level TO the provided liters, so we need to calculate
       // the total liters (current + added) before calling it
+      let fuelUpdateSuccess = false;
+      let updatedFuelLevel = null;
+      
+      console.log('[AddFuelLog] 🔄 Starting fuel level update process:', {
+        litersToAdd: liters,
+        hasFuelTank: !!selectedMotor.motorcycleId?.fuelTank,
+        fuelTankCapacity: selectedMotor.motorcycleId?.fuelTank,
+        currentFuelLevel: selectedMotor.currentFuelLevel,
+      });
+      
       if (liters > 0 && selectedMotor.motorcycleId?.fuelTank) {
         try {
           // Calculate current fuel in liters
@@ -137,41 +228,167 @@ export default function AddFuelLogScreen() {
           // Calculate total fuel after adding the refueled liters
           const totalFuelInLiters = currentFuelInLiters + liters;
           
+          console.log('[AddFuelLog] 📐 Fuel level calculation:', {
+            currentFuelPercentage,
+            fuelTankCapacity,
+            currentFuelInLiters: currentFuelInLiters.toFixed(2),
+            litersToAdd: liters.toFixed(2),
+            totalFuelInLiters: totalFuelInLiters.toFixed(2),
+            estimatedPercentage: ((totalFuelInLiters / fuelTankCapacity) * 100).toFixed(1),
+            willOverflow: totalFuelInLiters > fuelTankCapacity,
+          });
+          
+          console.log('[AddFuelLog] 📤 Calling fuel level update API:', {
+            endpoint: `/api/user-motors/${selectedMotor._id}/fuel/liters`,
+            motorId: selectedMotor._id,
+            totalLiters: totalFuelInLiters,
+          });
+          
           // Call the endpoint with total liters (it will clamp to tank capacity if overflow)
           const fuelUpdateResult = await updateFuelLevelByLiters(selectedMotor._id, totalFuelInLiters);
-          if (__DEV__) {
-            console.log('[AddFuelLog] Fuel level updated by liters:', {
+          
+          console.log('[AddFuelLog] 📥 Fuel level update API response:', {
+            success: !!fuelUpdateResult,
+            motor: fuelUpdateResult?.motor ? {
+              _id: fuelUpdateResult.motor._id,
+              fuelLevel: fuelUpdateResult.motor.fuelLevel,
+            } : null,
+            conversion: fuelUpdateResult?.conversion,
+          });
+          
+          if (fuelUpdateResult?.motor?.fuelLevel) {
+            fuelUpdateSuccess = true;
+            updatedFuelLevel = fuelUpdateResult.motor.fuelLevel.percentage;
+            
+            console.log('[AddFuelLog] ✅ Fuel level update successful:', {
               motorId: selectedMotor._id,
+              oldLevel: selectedMotor.currentFuelLevel,
+              newLevel: updatedFuelLevel,
               litersAdded: liters,
               currentFuelInLiters: currentFuelInLiters.toFixed(2),
               totalFuelInLiters: totalFuelInLiters.toFixed(2),
-              oldLevel: selectedMotor.currentFuelLevel,
-              newLevel: fuelUpdateResult?.motor?.fuelLevel?.percentage,
-              actualLiters: fuelUpdateResult?.motor?.fuelLevel?.liters,
-              fuelTankCapacity: fuelUpdateResult?.motor?.fuelLevel?.fuelTankCapacity,
-              overflow: fuelUpdateResult?.conversion?.overflow,
+              actualLiters: fuelUpdateResult.motor.fuelLevel.liters,
+              fuelTankCapacity: fuelUpdateResult.motor.fuelLevel.fuelTankCapacity,
+              overflow: fuelUpdateResult.conversion?.overflow || 0,
+              drivableDistance: fuelUpdateResult.motor.drivableDistance,
+            });
+            
+            // Update local state immediately for better UX
+            console.log('[AddFuelLog] 🔄 Updating local motors state...');
+            setMotors(prev => {
+              const updated = prev.map(motor => 
+                motor._id === selectedMotor._id 
+                  ? { 
+                      ...motor, 
+                      currentFuelLevel: updatedFuelLevel,
+                      // Update fuel level details if available
+                      ...(fuelUpdateResult.motor.fuelLevel.liters !== undefined && {
+                        fuelLevelLiters: fuelUpdateResult.motor.fuelLevel.liters
+                      })
+                    }
+                  : motor
+              );
+              console.log('[AddFuelLog] ✅ Motors state updated:', {
+                totalMotors: updated.length,
+                updatedMotor: updated.find(m => m._id === selectedMotor._id),
+              });
+              return updated;
+            });
+            
+            // Update selectedMotor state immediately
+            console.log('[AddFuelLog] 🔄 Updating selectedMotor state...');
+            setSelectedMotor(prev => {
+              if (!prev) return null;
+              const updated = {
+                ...prev,
+                currentFuelLevel: updatedFuelLevel,
+                ...(fuelUpdateResult.motor.fuelLevel.liters !== undefined && {
+                  fuelLevelLiters: fuelUpdateResult.motor.fuelLevel.liters
+                })
+              };
+              console.log('[AddFuelLog] ✅ selectedMotor state updated:', {
+                motorId: updated._id,
+                newFuelLevel: updated.currentFuelLevel,
+              });
+              return updated;
+            });
+          } else {
+            console.warn('[AddFuelLog] ⚠️ Fuel level update response missing motor.fuelLevel:', {
+              response: fuelUpdateResult,
             });
           }
         } catch (fuelError: any) {
           // Log error but don't fail the entire operation
           // The fuel log was saved successfully, fuel level update is secondary
-          console.warn('[AddFuelLog] Failed to update fuel level (fuel log was saved):', fuelError?.message || fuelError);
+          console.error('[AddFuelLog] ❌ Failed to update fuel level (fuel log was saved):', {
+            error: fuelError,
+            message: fuelError?.message,
+            stack: fuelError?.stack,
+            motorId: selectedMotor._id,
+            litersAttempted: totalFuelInLiters,
+            timestamp: new Date().toISOString(),
+          });
+          // Show warning to user but don't block the success message
+          Alert.alert(
+            "⚠️ Fuel Level Update Warning",
+            `Fuel log was saved successfully, but fuel level update failed: ${fuelError?.message || 'Unknown error'}. Please update fuel level manually.`,
+            [{ text: "OK" }]
+          );
         }
       } else if (liters > 0 && !selectedMotor.motorcycleId?.fuelTank) {
         // Warn if fuel tank capacity is not set
-        console.warn('[AddFuelLog] Cannot update fuel level: fuel tank capacity not set for motor');
+        console.warn('[AddFuelLog] ⚠️ Cannot update fuel level: fuel tank capacity not set for motor:', {
+          motorId: selectedMotor._id,
+          motorNickname: selectedMotor.nickname,
+          litersToAdd: liters,
+          hasMotorcycleId: !!selectedMotor.motorcycleId,
+          motorcycleId: selectedMotor.motorcycleId?._id,
+        });
+        Alert.alert(
+          "⚠️ Fuel Tank Capacity Missing",
+          "Fuel log was saved, but fuel level cannot be updated because fuel tank capacity is not set for this motor. Please set the fuel tank capacity in motor settings.",
+          [{ text: "OK" }]
+        );
+      } else if (liters <= 0) {
+        console.log('[AddFuelLog] ⏭️ Skipping fuel level update: liters <= 0:', {
+          liters,
+        });
       }
 
-      await fetchUserMotors(); // refresh cache
+      // Always refresh motors from backend to ensure data consistency
+      // This ensures we get the latest fuel level even if local update failed
+      console.log('[AddFuelLog] 🔄 Refreshing motors from backend...');
+      await fetchUserMotors();
+      console.log('[AddFuelLog] ✅ Motors refreshed from backend');
+
+      console.log('[AddFuelLog] ✅ All operations completed successfully:', {
+        fuelLogSaved: true,
+        fuelLevelUpdated: fuelUpdateSuccess,
+        newFuelLevel: updatedFuelLevel,
+        timestamp: new Date().toISOString(),
+      });
 
       Alert.alert("✅ Success", "Fuel log added successfully!");
       navigation.goBack();
     } catch (err: any) {
-      console.error("❌ handleSave error:", err);
+      console.error('[AddFuelLog] ❌ handleSave error:', {
+        error: err,
+        message: err?.message,
+        stack: err?.stack,
+        formData: {
+          totalCost: formData.totalCost,
+          pricePerLiter: formData.pricePerLiter,
+          odometer: formData.odometer,
+        },
+        selectedMotor: selectedMotor?._id,
+        userId: user?._id,
+        timestamp: new Date().toISOString(),
+      });
       const errorMessage = err?.message || "Failed to save fuel log. Please try again.";
       Alert.alert("Error", errorMessage);
     } finally {
       setIsSubmitting(false);
+      console.log('[AddFuelLog] 🏁 handleSave completed, isSubmitting set to false');
     }
   };
 
